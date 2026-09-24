@@ -20,6 +20,8 @@ import android.content.pm.ActivityInfo;
 import android.content.res.AssetManager;
 import android.graphics.Color;
 import android.graphics.PorterDuff;
+import android.net.ConnectivityManager;
+import android.net.Network;
 import android.net.Uri;
 import android.os.AsyncTask;
 import android.os.Build;
@@ -33,6 +35,7 @@ import android.webkit.CookieManager;
 import android.webkit.DownloadListener;
 import android.webkit.URLUtil;
 import android.webkit.WebChromeClient;
+import android.webkit.WebResourceError;
 import android.webkit.WebResourceRequest;
 import android.webkit.WebResourceResponse;
 import android.webkit.WebSettings;
@@ -74,6 +77,8 @@ public class MainActivity extends Activity {
     private ImageView btnBack, btnForward;
     private View splashOverlay;
     private ObjectAnimator splashPulse;
+    private View offlineOverlay;
+    private ConnectivityManager.NetworkCallback netCallback;
 
     // Нижняя навигация: Главная / Shorts / Популярное
     private static final int[] TAB_ROOT_IDS = {R.id.tab_home, R.id.tab_shorts, R.id.tab_trending};
@@ -107,6 +112,9 @@ public class MainActivity extends Activity {
         startSplashPulse();
         setupRegionPicker();
         updateRegionLabel();
+        offlineOverlay = findViewById(R.id.offline_overlay);
+        setupRetryButton();
+        registerNetworkCallback();
         btnBack = findViewById(R.id.btn_back);
         btnForward = findViewById(R.id.btn_forward);
 
@@ -147,6 +155,7 @@ public class MainActivity extends Activity {
                 injectVot(view);
                 updateNavState();
                 updateActiveTab();
+                hideOffline();
                 view.setAlpha(0f); // плавное появление вместо резкой смены кадра
             }
 
@@ -156,6 +165,15 @@ public class MainActivity extends Activity {
                 updateActiveTab();
                 hideSplash();
                 view.animate().alpha(1f).setDuration(220).start();
+            }
+
+            @Override
+            public void onReceivedError(WebView view, WebResourceRequest request,
+                                        WebResourceError error) {
+                // Только ошибка загрузки главного кадра (не фоновые ресурсы)
+                if (request != null && request.isForMainFrame()) {
+                    showOffline();
+                }
             }
 
             @Override
@@ -580,6 +598,75 @@ public class MainActivity extends Activity {
         label.setText(sb.toString());
     }
 
+    /* ---------------- Офлайн-экран ---------------- */
+
+    private void setupRetryButton() {
+        View retry = findViewById(R.id.btn_retry);
+        if (retry == null) return;
+        retry.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                pressFeedback(v);
+                String url = web.getUrl();
+                if (url == null || !url.startsWith("http")) url = withRegion(HOME_URL);
+                web.loadUrl(url);
+            }
+        });
+    }
+
+    private void showOffline() {
+        if (offlineOverlay == null) return;
+        offlineOverlay.setVisibility(View.VISIBLE);
+        offlineOverlay.setAlpha(0f);
+        offlineOverlay.animate().alpha(1f).setDuration(200).start();
+    }
+
+    private void hideOffline() {
+        if (offlineOverlay == null || offlineOverlay.getVisibility() != View.VISIBLE) return;
+        offlineOverlay.animate().alpha(0f).setDuration(200).withEndAction(new Runnable() {
+            @Override
+            public void run() {
+                offlineOverlay.setVisibility(View.GONE);
+                offlineOverlay.setAlpha(1f);
+            }
+        });
+    }
+
+    private void registerNetworkCallback() {
+        ConnectivityManager cm = (ConnectivityManager) getSystemService(Context.CONNECTIVITY_SERVICE);
+        if (cm == null) return;
+        try {
+            netCallback = new ConnectivityManager.NetworkCallback() {
+                @Override
+                public void onAvailable(Network network) {
+                    runOnUiThread(new Runnable() {
+                        @Override
+                        public void run() {
+                            if (offlineOverlay != null
+                                    && offlineOverlay.getVisibility() == View.VISIBLE) {
+                                String url = web.getUrl();
+                                if (url == null || !url.startsWith("http")) url = withRegion(HOME_URL);
+                                web.loadUrl(url);
+                            }
+                        }
+                    });
+                }
+            };
+            cm.registerDefaultNetworkCallback(netCallback);
+        } catch (Exception ignored) {
+        }
+    }
+
+    private void unregisterNetworkCallback() {
+        if (netCallback == null) return;
+        try {
+            ConnectivityManager cm = (ConnectivityManager) getSystemService(Context.CONNECTIVITY_SERVICE);
+            if (cm != null) cm.unregisterNetworkCallback(netCallback);
+        } catch (Exception ignored) {
+        }
+        netCallback = null;
+    }
+
     /** Плавное исчезновение сплэша после первой загрузки страницы. */
     private void hideSplash() {
         if (splashOverlay == null || splashOverlay.getVisibility() != View.VISIBLE) return;
@@ -621,6 +708,7 @@ public class MainActivity extends Activity {
 
     @Override
     protected void onDestroy() {
+        unregisterNetworkCallback();
         if (web != null) {
             web.destroy();
             web = null;

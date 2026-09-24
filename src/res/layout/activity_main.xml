@@ -354,4 +354,63 @@
             </LinearLayout>
         </LinearLayout>
     </FrameLayout>
+
+    <!-- Офлайн: нет соединения -->
+    <FrameLayout
+        android:id="@+id/offline_overlay"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:background="@color/background"
+        android:visibility="gone">
+
+        <LinearLayout
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="center"
+            android:orientation="vertical"
+            android:gravity="center_horizontal">
+
+            <ImageView
+                android:layout_width="56dp"
+                android:layout_height="56dp"
+                android:src="@drawable/ic_brand_logo"
+                android:alpha="0.55"
+                android:importantForAccessibility="no" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="20dp"
+                android:text="@string/offline_title"
+                android:textColor="@color/text_primary"
+                android:textSize="20sp"
+                android:textStyle="bold" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="6dp"
+                android:text="@string/offline_sub"
+                android:textColor="@color/text_secondary"
+                android:textSize="13sp"
+                android:gravity="center" />
+
+            <TextView
+                android:id="@+id/btn_retry"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="28dp"
+                android:background="@drawable/btn_retry_bg"
+                android:paddingStart="34dp"
+                android:paddingEnd="34dp"
+                android:paddingTop="12dp"
+                android:paddingBottom="12dp"
+                android:text="@string/retry"
+                android:textColor="@color/text_primary"
+                android:textSize="15sp"
+                android:textStyle="bold"
+                android:clickable="true"
+                android:focusable="true" />
+        </LinearLayout>
+    </FrameLayout>
 </LinearLayout>

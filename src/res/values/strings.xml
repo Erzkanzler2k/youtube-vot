@@ -17,4 +17,7 @@
     <string name="region_by_device"> · по устройству</string>
     <string name="download_saved">Файл сохранён: %1$s</string>
     <string name="download_failed">Не удалось сохранить файл</string>
+    <string name="offline_title">Нет соединения</string>
+    <string name="offline_sub">Проверьте подключение к интернету</string>
+    <string name="retry">Повторить</string>
 </resources>
