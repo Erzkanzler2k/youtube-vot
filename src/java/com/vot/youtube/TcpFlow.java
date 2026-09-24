@@ -12,6 +12,11 @@
  * сегментами), чтобы DPI не увидел SNI в первом сегменте. Сервер (Linux TCP
  * reassembly + TLS record reassembly) спокойно переживает такой разрез.
  *
+ * Способ десинхронизации — только байтовый (split + паузы, как tpws):
+ * наружу трафик уходит через обычный Socket, и ядро само собирает TCP, поэтому
+ * настоящего reordering (zapret --disorder / nfqws) без raw-сокета не бывает —
+ * перемешивание сегментов в байтовом потоке ядро просто выправит по порядку.
+ *
  * Java 8-совместимый код, без AndroidX.
  */
 package com.vot.youtube;
@@ -33,11 +38,11 @@ public final class TcpFlow {
     /** Сколько байт первого payload максимум буферизуем в поисках SNI. */
     private static final int SNI_BUFFER_CAP = 4096;
 
-    // zapret-стратегии десинхронизации первого ClientHello (split/disorder)
+    // zapret-стратегия десинхронизации первого ClientHello (split + паузы)
     private static final int DESYNC_BASE_DELAY_MS = 7;     // пауза между сегментами
     private static final int DESYNC_JITTER_MS = 4;         // +/- джиттер
-    private static final long DESYNC_DISORDER_GAP_MS = 2;  // зазор между "переставленными"
-    private static final double DISORDER_PROBABILITY = 0.5;// доля соединений с disorder
+    /** MSS, который мы анонсируем клиенту в SYN+ACK (вписывается в TUN MTU 1500). */
+    private static final int OUR_MSS = 1400;
 
     // состояние перехвата первого payload
     private static final int SNI_NONE = 0; // порт не 443 - прозрачно
@@ -72,7 +77,10 @@ public final class TcpFlow {
     private byte[] pending;
     private int pendingLen;
     private int[] cuts;       // границы разреза ClientHello (абсолютные в pending)
-    private boolean disorder; // слать сегменты не по порядку (как zapret --disorder)
+
+    // TCP-опции клиента из SYN (для нашего SYN+ACK)
+    private int clientMss;
+    private int clientWscale;
 
     private final Random rnd = new Random();
     private long lastActive = System.currentTimeMillis();
@@ -150,6 +158,8 @@ public final class TcpFlow {
         synAckSent = true;
         synSeqKnown = true;
         synSeq = t.seq;
+        clientMss = t.mss;
+        clientWscale = t.wscale;
         sIsn = (System.nanoTime() ^ ((long) srcPort << 16 | dstPort)) & 0xFFFFFFFFL;
         clientNext = (synSeq + 1) & 0xFFFFFFFFL;
         sSeq = (sIsn + 1) & 0xFFFFFFFFL;
@@ -159,11 +169,15 @@ public final class TcpFlow {
     /* ---------------- выход к приложению (в TUN) ---------------- */
 
     private void sendSynAck() {
-        byte[] pkt = new byte[40];
-        int total = BypassProto.buildTcpPacket(pkt,
+        // MSS: не больше нашего (вписывается в TUN MTU 1500) и не больше клиентского.
+        // Window Scale: зеркалим клиенту (0 — если он масштабирование не предложил).
+        int mss = clientMss > 0 ? Math.min(clientMss, OUR_MSS) : OUR_MSS;
+        int ws = (clientWscale > 0 && clientWscale <= 14) ? clientWscale : 0;
+        byte[] pkt = new byte[48];
+        int total = BypassProto.buildTcpPacketOpt(pkt,
                 dstIp, srcIp, dstPort, srcPort,
                 sIsn, clientNext, BypassProto.FLAG_SYN | BypassProto.FLAG_ACK,
-                null, 0, 0);
+                mss, ws, null, 0, 0);
         engine.writeTun(pkt, total);
     }
 
@@ -247,18 +261,35 @@ public final class TcpFlow {
     }
 
     private void pump() {
+        boolean cleanEof = false;
         try {
             InputStream inStream = out.getInputStream();
             byte[] rbuf = new byte[1400];
             int n;
             while (!done) {
                 n = inStream.read(rbuf);
-                if (n < 0) break;
+                if (n < 0) {
+                    cleanEof = true; // сервер штатно закрыл (FIN)
+                    break;
+                }
                 if (n > 0) writeToClient(rbuf, n);
             }
         } catch (IOException ignored) {
+            // обрыв/RST/сброс от сервера или закрытие нашего сокета
         }
-        serverEof();
+        if (done) return; // закрыли сами (клиент ушёл первым) — RST не нужен
+        if (cleanEof) {
+            serverEof();
+        } else {
+            serverAbort();
+        }
+    }
+
+    /** Сервер оборвал соединение (RST/таймаут) — сигналим клиенту RST, не FIN. */
+    private void serverAbort() {
+        if (done) return;
+        sendRstToApp();
+        closeFlow();
     }
 
     private void serverEof() {
@@ -330,8 +361,7 @@ public final class TcpFlow {
      * Готовим план резки первого ClientHello. Разрезы идут ВНУТРИ имени SNI и
      * ВНУТРИ самого суффикса (youtube.com, googlevideo.com...) — ни один
      * сегмент не содержит полного имени или полного суффикса. Случайное число
-     * сегментов (4-5), случайный порядок (disorder) и паузы — чтобы DPI не
-     * выучил постоянный паттерн.
+     * сегментов (4-5) и паузы — чтобы DPI не выучил постоянный паттерн.
      */
     private void scheduleDesync(String host, int nameOff, int nameLen) {
         TreeSet<Integer> p = new TreeSet<Integer>();
@@ -351,7 +381,6 @@ public final class TcpFlow {
         int i = 0;
         for (Integer c : p) arr[i++] = c;
         cuts = arr;
-        disorder = rnd.nextDouble() < DISORDER_PROBABILITY;
     }
 
     /** Самый длинный суффикс из списка, которым заканчивается host (или null). */
@@ -365,7 +394,12 @@ public final class TcpFlow {
         return best;
     }
 
-    /** Шлём ClientHello сегментами (иногда не по порядку) с паузами между ними. */
+    /**
+     * Шлём ClientHello сегментами с паузами 3-11 мс между ними: каждый write
+     * с TCP_NODELAY уходит отдельным сегментом, и ни в одном из них DPI не
+     * видит полного SNI/суффикса. Настоящее reordering недоступно без raw —
+     * ядро само упорядочивает байты, поэтому порядок всегда прямой.
+     */
     private void writeDesynced(byte[] buf, int off, int len) {
         int m = cuts.length + 1;
         int[] starts = new int[m];
@@ -379,23 +413,9 @@ public final class TcpFlow {
         starts[m - 1] = prev;
         ends[m - 1] = off + len;
 
-        int[] order = new int[m];
-        for (int i = 0; i < m; i++) order[i] = i;
-        if (disorder) {
-            // перемешиваем все сегменты: сервер пересоберёт, DPI увидит куски
-            for (int i = m - 1; i > 0; i--) {
-                int j = rnd.nextInt(i + 1);
-                int t = order[i];
-                order[i] = order[j];
-                order[j] = t;
-            }
-        }
         for (int i = 0; i < m; i++) {
-            if (i > 0) {
-                sleepMs(disorder ? DESYNC_DISORDER_GAP_MS : delayMs());
-            }
-            int s = order[i];
-            if (ends[s] > starts[s]) writeAll(buf, starts[s], ends[s] - starts[s]);
+            if (i > 0) sleepMs(delayMs());
+            if (ends[i] > starts[i]) writeAll(buf, starts[i], ends[i] - starts[i]);
         }
     }
 

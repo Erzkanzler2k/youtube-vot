@@ -103,6 +103,10 @@ public final class BypassProto {
         public boolean psh;
         public int payloadOff;
         public int payloadLen;
+        /** MSS из TCP-опций клиента (0, если опции не присланы). */
+        public int mss;
+        /** Window Scale из TCP-опций клиента (0, если scaling не предложен). */
+        public int wscale;
     }
 
     /** Разбирает TCP-сегмент. off — начало TCP-заголовка (уже после IPv4). */
@@ -125,6 +129,31 @@ public final class BypassProto {
         r.payloadOff = off + r.hdrLen;
         r.payloadLen = len - r.hdrLen;
         r.ok = true;
+
+        // Опции TCP (MSS kind=2, Window Scale kind=3) — нужны для корректного
+        // SYN+ACK: без MSS клиент урежет сегменты до 536, без WS окно ≤ 64 КБ.
+        r.mss = 0;
+        r.wscale = 0;
+        if (r.hdrLen > 20) {
+            int o = off + 20;
+            int end = off + r.hdrLen;
+            while (o + 1 < end) {
+                int kind = p[o] & 0xFF;
+                if (kind == 0) break; // EOL
+                if (kind == 1) { // NOP
+                    o++;
+                    continue;
+                }
+                int olen = p[o + 1] & 0xFF;
+                if (olen < 2 || o + olen > end) break;
+                if (kind == 2 && olen == 4) {
+                    r.mss = ((p[o + 2] & 0xFF) << 8) | (p[o + 3] & 0xFF);
+                } else if (kind == 3 && olen == 3) {
+                    r.wscale = p[o + 2] & 0xFF;
+                }
+                o += olen;
+            }
+        }
         return r;
     }
 
@@ -214,7 +243,31 @@ public final class BypassProto {
                                      int srcPort, int dstPort,
                                      long seq, long ack, int flags,
                                      byte[] payload, int payloadOff, int payloadLen) {
-        int total = 40 + payloadLen;
+        return buildTcpPacketCommon(buf, srcIp, dstIp, srcPort, dstPort,
+                seq, ack, flags, 0, 0, payload, payloadOff, payloadLen);
+    }
+
+    /** Как buildTcpPacket, но с опциями MSS и Window Scale (для SYN+ACK).
+     *  buf должен быть >= 48 + payloadLen. */
+    public static int buildTcpPacketOpt(byte[] buf, int srcIp, int dstIp,
+                                        int srcPort, int dstPort,
+                                        long seq, long ack, int flags,
+                                        int mss, int wscale,
+                                        byte[] payload, int payloadOff, int payloadLen) {
+        return buildTcpPacketCommon(buf, srcIp, dstIp, srcPort, dstPort,
+                seq, ack, flags, mss, wscale, payload, payloadOff, payloadLen);
+    }
+
+    private static int buildTcpPacketCommon(byte[] buf, int srcIp, int dstIp,
+                                            int srcPort, int dstPort,
+                                            long seq, long ack, int flags,
+                                            int mss, int wscale,
+                                            byte[] payload, int payloadOff, int payloadLen) {
+        int optLen = 0;
+        if (mss > 0) optLen += 4;    // MSS: kind(1)+len(1)+value(2)
+        if (wscale > 0) optLen += 4; // WS: kind(1)+len(1)+value(1)+NOP(1) — выравнивание по 4
+        int tcpHdr = 20 + optLen;
+        int total = 20 + tcpHdr + payloadLen;
 
         // IPv4-заголовок (20 байт)
         buf[0] = 0x45;
@@ -232,14 +285,14 @@ public final class BypassProto {
         writeInt(buf, 12, srcIp);
         writeInt(buf, 16, dstIp);
 
-        // TCP-заголовок (20 байт)
+        // TCP-заголовок
         buf[20] = (byte) (srcPort >>> 8);
         buf[21] = (byte) (srcPort & 0xFF);
         buf[22] = (byte) (dstPort >>> 8);
         buf[23] = (byte) (dstPort & 0xFF);
         writeUInt(buf, 24, seq);
         writeUInt(buf, 28, ack);
-        buf[32] = (byte) (5 << 4); // data offset = 5 слов
+        buf[32] = (byte) ((tcpHdr >>> 2) << 4); // data offset (в 32-битных словах)
         buf[33] = (byte) (flags & 0xFF);
         buf[34] = (byte) (0xFFFF >>> 8); // window 65535
         buf[35] = (byte) (0xFFFF & 0xFF);
@@ -248,10 +301,25 @@ public final class BypassProto {
         buf[38] = 0;
         buf[39] = 0; // urgent
 
-        if (payload != null && payloadLen > 0) {
-            System.arraycopy(payload, payloadOff, buf, 40, payloadLen);
+        int o = 40;
+        if (mss > 0) {
+            buf[o] = 2;
+            buf[o + 1] = 4;
+            buf[o + 2] = (byte) (mss >>> 8);
+            buf[o + 3] = (byte) (mss & 0xFF);
+            o += 4;
         }
-        setTcpChecksum(buf, 20, 20 + payloadLen, srcIp, dstIp);
+        if (wscale > 0) {
+            buf[o] = 3;
+            buf[o + 1] = 3;
+            buf[o + 2] = (byte) (wscale & 0xFF);
+            buf[o + 3] = 1; // NOP padding
+        }
+
+        if (payload != null && payloadLen > 0) {
+            System.arraycopy(payload, payloadOff, buf, 20 + tcpHdr, payloadLen);
+        }
+        setTcpChecksum(buf, 20, tcpHdr + payloadLen, srcIp, dstIp);
         setIpChecksum(buf, 0, 20);
         return total;
     }

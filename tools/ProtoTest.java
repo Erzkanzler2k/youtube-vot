@@ -155,6 +155,46 @@ public class ProtoTest {
         frag[6] = 0x20; // MF
         check("mf detected", BypassProto.isIpFragment(frag, 0));
 
+        // 6. TCP-опции MSS/WS: сборка SYN+ACK с опциями и их парсинг
+        byte[] synAck = new byte[48];
+        int sn = BypassProto.buildTcpPacketOpt(synAck, dstIp, srcIp, 443, 40000,
+                0x0A0B0C0DL, 0x02030405L, BypassProto.FLAG_SYN | BypassProto.FLAG_ACK,
+                1400, 7, null, 0, 0);
+        check("opt tcp total=48", sn == 48);
+        Ip4 oip = BypassProto.parseIp4(synAck, 0, sn);
+        Tcp4 ot = BypassProto.parseTcp(synAck, oip.payloadOff, oip.payloadLen);
+        check("opt parse ok", ot.ok && ot.syn && ot.ackFlag);
+        check("opt hdrLen=28 (8 байт опций)", ot.hdrLen == 28);
+        check("opt mss parsed", ot.mss == 1400);
+        check("opt wscale parsed", ot.wscale == 7);
+
+        byte[] oCopy = synAck.clone();
+        oCopy[36] = 0;
+        oCopy[37] = 0;
+        BypassProto.setTcpChecksum(oCopy, 20, 28, dstIp, srcIp);
+        check("opt tcp checksum valid", oCopy[36] == synAck[36] && oCopy[37] == synAck[37]);
+
+        // 7. Обычный пакет без опций + SYN клиента с другими MSS/WS
+        Tcp4 noOpt = BypassProto.parseTcp(tcpPkt, ip.payloadOff, ip.payloadLen);
+        check("no-opt mss=0 wscale=0", noOpt.mss == 0 && noOpt.wscale == 0);
+
+        byte[] syn = new byte[48];
+        int sn2 = BypassProto.buildTcpPacketOpt(syn, srcIp, dstIp,
+                40000, 443, 0x11111111L, 0, BypassProto.FLAG_SYN,
+                1460, 7, null, 0, 0);
+        Ip4 sip = BypassProto.parseIp4(syn, 0, sn2);
+        Tcp4 st = BypassProto.parseTcp(syn, sip.payloadOff, sip.payloadLen);
+        check("client syn mss=1460", st.ok && st.syn && st.mss == 1460 && st.wscale == 7);
+
+        // 8. Опции клиента с wscale=0 (scaling не нужен) → mss парсится, ws=0
+        byte[] synNoWs = new byte[44];
+        int sn3 = BypassProto.buildTcpPacketOpt(synNoWs, srcIp, dstIp,
+                40001, 443, 0x22222222L, 0, BypassProto.FLAG_SYN,
+                1200, 0, null, 0, 0);
+        Ip4 wip = BypassProto.parseIp4(synNoWs, 0, sn3);
+        Tcp4 wt = BypassProto.parseTcp(synNoWs, wip.payloadOff, wip.payloadLen);
+        check("syn wscale=0 only mss", wt.ok && wt.mss == 1200 && wt.wscale == 0);
+
         System.out.println("----");
         System.out.println(checks + " checks, " + failed + " failed");
         if (failed > 0) System.exit(1);

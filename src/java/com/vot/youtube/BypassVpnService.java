@@ -112,6 +112,9 @@ public class BypassVpnService extends VpnService {
         b.addRoute("0.0.0.0", 0);
         b.addDnsServer("77.88.8.8");
         b.addDnsServer("77.88.8.1");
+        // Явный MTU: наш mini-TCP анонсирует клиенту MSS 1400 — пакеты всегда
+        // укладываются в 1500, фрагментация по пути в TUN не нужна.
+        b.setMtu(1500);
         denyOtherApps(b);
         b.setBlocking(true);
         ParcelFileDescriptor tun = b.establish();
