@@ -37,6 +37,7 @@ import android.os.Environment;
 import android.provider.MediaStore;
 import android.provider.Settings;
 import android.view.DisplayCutout;
+import android.view.Gravity;
 import android.view.HapticFeedbackConstants;
 import android.view.View;
 import android.view.ViewGroup;
@@ -52,9 +53,13 @@ import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
 import android.webkit.ValueCallback;
+import android.widget.CompoundButton;
+import android.widget.EditText;
 import android.widget.FrameLayout;
 import android.widget.ImageView;
+import android.widget.LinearLayout;
 import android.widget.ProgressBar;
+import android.widget.Switch;
 import android.widget.TextView;
 import android.widget.Toast;
 
@@ -88,6 +93,8 @@ public class MainActivity extends Activity {
     private static final String PREF_SKIP_UPDATE = "skip_update_version";
     private static final String PREF_PENDING_URL = "pending_update_url";
     private static final String PREF_PENDING_TAG = "pending_update_tag";
+    private static final String PREF_AUTO_UPDATE = "auto_update";
+    private static final String PREF_WORKER_URL = "worker_url";
 
     private WebView web;
     private FrameLayout customViewContainer;
@@ -312,6 +319,15 @@ public class MainActivity extends Activity {
             public void onClick(View v) {
                 pressFeedback(v);
                 finish();
+            }
+        });
+
+        ImageView settings = findViewById(R.id.btn_settings);
+        settings.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                pressFeedback(v);
+                showSettingsDialog();
             }
         });
 
@@ -623,9 +639,7 @@ public class MainActivity extends Activity {
         web.loadUrl(withRegion(HOME_URL));
     }
 
-    private void updateRegionLabel() {
-        TextView label = findViewById(R.id.splash_region_label);
-        if (label == null) return;
+    private String regionLabel() {
         String[] labels = getResources().getStringArray(R.array.region_labels);
         String[] codes = getResources().getStringArray(R.array.region_codes);
         String eff = effectiveCode();
@@ -633,7 +647,210 @@ public class MainActivity extends Activity {
         String name = idx >= 0 ? labels[idx] : eff.toUpperCase(Locale.US);
         StringBuilder sb = new StringBuilder(getString(R.string.region_label_prefix)).append(name);
         if ("auto".equals(regionCode())) sb.append(getString(R.string.region_by_device));
-        label.setText(sb.toString());
+        return sb.toString();
+    }
+
+    private void updateRegionLabel() {
+        TextView label = findViewById(R.id.splash_region_label);
+        if (label == null) return;
+        label.setText(regionLabel());
+    }
+
+    /* ---------------- Настройки приложения ---------------- */
+
+    private void showSettingsDialog() {
+        SharedPreferences prefs = regionPrefs();
+        final AlertDialog[] holder = new AlertDialog[1];
+
+        LinearLayout content = new LinearLayout(this);
+        content.setOrientation(LinearLayout.VERTICAL);
+
+        // Страна контента
+        LinearLayout rowRegion = settingsRow(R.drawable.ic_globe,
+                getString(R.string.settings_region), regionLabel());
+        rowRegion.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                pressFeedback(v);
+                if (holder[0] != null) holder[0].dismiss();
+                showRegionDialog();
+            }
+        });
+        content.addView(rowRegion);
+
+        // Автообновление
+        LinearLayout rowUpdate = settingsRow(R.drawable.ic_refresh,
+                getString(R.string.settings_auto_update),
+                getString(R.string.settings_auto_update_desc));
+        rowUpdate.setClickable(false);
+        rowUpdate.setFocusable(false);
+        Switch sw = new Switch(this);
+        sw.setChecked(prefs.getBoolean(PREF_AUTO_UPDATE, true));
+        sw.setOnCheckedChangeListener(new CompoundButton.OnCheckedChangeListener() {
+            @Override
+            public void onCheckedChanged(CompoundButton b, boolean checked) {
+                regionPrefs().edit().putBoolean(PREF_AUTO_UPDATE, checked).apply();
+            }
+        });
+        LinearLayout.LayoutParams swLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        swLp.setMarginStart(dp(16));
+        rowUpdate.addView(sw, swLp);
+        content.addView(rowUpdate);
+
+        // Сервер перевода
+        String worker = prefs.getString(PREF_WORKER_URL, "");
+        String workerSub = worker.isEmpty() ? getString(R.string.settings_default_worker) : worker;
+        LinearLayout rowWorker = settingsRow(R.drawable.ic_settings,
+                getString(R.string.settings_worker), workerSub);
+        rowWorker.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                pressFeedback(v);
+                if (holder[0] != null) holder[0].dismiss();
+                showWorkerDialog();
+            }
+        });
+        content.addView(rowWorker);
+
+        // Сброс настроек
+        LinearLayout rowReset = settingsRow(R.drawable.ic_close,
+                getString(R.string.settings_reset), null);
+        rowReset.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                pressFeedback(v);
+                if (holder[0] != null) holder[0].dismiss();
+                confirmReset();
+            }
+        });
+        content.addView(rowReset);
+
+        AlertDialog dialog = new AlertDialog.Builder(this)
+                .setTitle(R.string.settings)
+                .setView(content)
+                .setNegativeButton(android.R.string.cancel, null)
+                .create();
+        holder[0] = dialog;
+        dialog.show();
+    }
+
+    /** Строка диалога настроек: иконка + заголовок + подпись. */
+    private LinearLayout settingsRow(int iconRes, String title, String subtitle) {
+        LinearLayout row = new LinearLayout(this);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        row.setGravity(Gravity.CENTER_VERTICAL);
+        row.setClickable(true);
+        row.setFocusable(true);
+        int pad = dp(16);
+        row.setPadding(pad, dp(12), pad, dp(12));
+        android.util.TypedValue ripple = new android.util.TypedValue();
+        getTheme().resolveAttribute(android.R.attr.selectableItemBackground, ripple, true);
+        row.setBackgroundResource(ripple.resourceId);
+
+        ImageView icon = new ImageView(this);
+        icon.setImageResource(iconRes);
+        icon.setColorFilter(0xFF9AA0A6, PorterDuff.Mode.SRC_IN);
+        int iconSize = dp(22);
+        LinearLayout.LayoutParams iconLp = new LinearLayout.LayoutParams(iconSize, iconSize);
+        iconLp.setMarginEnd(dp(16));
+        icon.setLayoutParams(iconLp);
+        icon.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
+        row.addView(icon);
+
+        LinearLayout texts = new LinearLayout(this);
+        texts.setOrientation(LinearLayout.VERTICAL);
+        texts.setLayoutParams(new LinearLayout.LayoutParams(0,
+                ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+        TextView titleView = new TextView(this);
+        titleView.setText(title);
+        titleView.setTextColor(getColor(R.color.text_primary));
+        titleView.setTextSize(15);
+        texts.addView(titleView);
+        if (subtitle != null && !subtitle.isEmpty()) {
+            TextView subView = new TextView(this);
+            subView.setText(subtitle);
+            subView.setTextColor(getColor(R.color.text_secondary));
+            subView.setTextSize(12);
+            subView.setSingleLine(true);
+            LinearLayout.LayoutParams subLp = new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+            subLp.topMargin = dp(2);
+            subView.setLayoutParams(subLp);
+            texts.addView(subView);
+        }
+        row.addView(texts);
+        return row;
+    }
+
+    private int dp(int value) {
+        return Math.round(value * getResources().getDisplayMetrics().density);
+    }
+
+    private void showWorkerDialog() {
+        final EditText input = new EditText(this);
+        input.setSingleLine(true);
+        input.setInputType(android.text.InputType.TYPE_CLASS_TEXT
+                | android.text.InputType.TYPE_TEXT_VARIATION_URI);
+        input.setHint(R.string.settings_worker_hint);
+        String current = regionPrefs().getString(PREF_WORKER_URL, "");
+        if (!current.isEmpty()) {
+            input.setText(current);
+            input.setSelection(input.getText().length());
+        }
+        new AlertDialog.Builder(this)
+                .setTitle(R.string.settings_worker_title)
+                .setView(input)
+                .setPositiveButton(android.R.string.ok, new DialogInterface.OnClickListener() {
+                    @Override
+                    public void onClick(DialogInterface d, int w) {
+                        applyWorkerUrl(input.getText().toString());
+                    }
+                })
+                .setNegativeButton(android.R.string.cancel, null)
+                .show();
+    }
+
+    /** Сохраняем адрес воркера и применяем его на странице (ключ VoT в localStorage). */
+    private void applyWorkerUrl(String value) {
+        final String clean = (value == null ? "" : value).trim();
+        SharedPreferences.Editor ed = regionPrefs().edit();
+        if (clean.isEmpty()) ed.remove(PREF_WORKER_URL);
+        else ed.putString(PREF_WORKER_URL, clean);
+        ed.apply();
+        if (web != null) {
+            String js = "(function(){try{var ls=window.localStorage;" +
+                    (clean.isEmpty()
+                            ? "ls.removeItem('proxyWorkerHost');"
+                            : "ls.setItem('proxyWorkerHost'," + JSONObject.quote(clean) + ");") +
+                    "}catch(e){}})();";
+            web.evaluateJavascript(js, null);
+            web.reload();
+        }
+    }
+
+    private void confirmReset() {
+        new AlertDialog.Builder(this)
+                .setTitle(R.string.settings_reset)
+                .setMessage(R.string.settings_reset_confirm)
+                .setPositiveButton(R.string.reset_yes, new DialogInterface.OnClickListener() {
+                    @Override
+                    public void onClick(DialogInterface d, int w) {
+                        resetPreferences();
+                    }
+                })
+                .setNegativeButton(android.R.string.cancel, null)
+                .show();
+    }
+
+    private void resetPreferences() {
+        regionPrefs().edit().clear().apply();
+        if (web != null) {
+            web.evaluateJavascript(
+                    "(function(){try{window.localStorage.removeItem('proxyWorkerHost');}catch(e){}})();", null);
+            web.loadUrl(withRegion(HOME_URL));
+        }
+        Toast.makeText(this, R.string.reset_done, Toast.LENGTH_SHORT).show();
     }
 
     /* ---------------- Офлайн-экран ---------------- */
@@ -710,6 +927,7 @@ public class MainActivity extends Activity {
     private void checkForUpdate() {
         if (updateChecked || web == null) return;
         updateChecked = true;
+        if (!regionPrefs().getBoolean(PREF_AUTO_UPDATE, true)) return;
         new CheckUpdateTask().execute();
     }
 

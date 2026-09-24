@@ -141,6 +141,19 @@
                 android:focusable="true"
                 android:background="?android:attr/selectableItemBackgroundBorderless"
                 android:contentDescription="@string/exit" />
+
+            <ImageView
+                android:id="@+id/btn_settings"
+                android:layout_width="0dp"
+                android:layout_height="46dp"
+                android:layout_weight="1"
+                android:padding="11dp"
+                android:src="@drawable/ic_settings"
+                android:tint="@color/icon"
+                android:clickable="true"
+                android:focusable="true"
+                android:background="?android:attr/selectableItemBackgroundBorderless"
+                android:contentDescription="@string/settings" />
         </LinearLayout>
     </LinearLayout>
 

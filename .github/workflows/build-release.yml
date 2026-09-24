@@ -60,14 +60,14 @@ jobs:
         run: powershell -ExecutionPolicy Bypass -File .\build.ps1
 
       - name: Upload APK artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7.0.1
         with:
           name: YouTubeVot-apk
           path: out/YouTubeVot.apk
 
       - name: Create GitHub Release
         if: startsWith(github.ref, 'refs/tags/')
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3.0.3
         with:
           files: out/YouTubeVot.apk
           name: ${{ github.ref_name }}
