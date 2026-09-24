@@ -137,7 +137,7 @@ public class MainActivity extends Activity {
     private View customView;
     private WebChromeClient.CustomViewCallback customViewCallback;
     private ProgressBar progressBar;
-    private ImageView btnBack, btnForward;
+    private ImageView btnBack, btnForward, btnRefresh, btnSettings;
     private View splashOverlay;
     private ObjectAnimator splashPulse;
     private View offlineOverlay;
@@ -159,8 +159,11 @@ public class MainActivity extends Activity {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_main);
 
-        // Тёмная системная панель в цвет YouTube; статус-бар скрыт (вид медиа-приложения)
-        getWindow().setNavigationBarColor(0xFF0F0F0F);
+        // Системная навигационная панель — в цвета интерфейса (раньше была жёстко
+        // чёрной, что выглядело полосой под светлым интерфейсом). Цвет уточняется
+        // в applyChromeColors() по фактической теме страницы.
+        initUiTheme();
+        getWindow().setNavigationBarColor(uiColor(R.color.background));
         getWindow().setStatusBarColor(Color.TRANSPARENT);
         setNormalSystemUi();
 
@@ -194,16 +197,21 @@ public class MainActivity extends Activity {
         s.setMixedContentMode(WebSettings.MIXED_CONTENT_NEVER_ALLOW);
         s.setUserAgentString(USER_AGENT);
 
-        // Тёмная страница на весь экран (как в оригинальном приложении с тёмной темой)
+        // Тема страницы следует за системной: в ночном режиме YouTube и его
+        // собственный тёмный стиль рендерятся тёмными, днём — светлыми.
+        // Раньше здесь стоял безусловный FORCE_DARK_ON, из-за чего включить
+        // светлую тему было невозможно.
+        boolean night = isNightMode();
         if (Build.VERSION.SDK_INT >= 29) {
             if (Build.VERSION.SDK_INT >= 33) {
-                s.setAlgorithmicDarkeningAllowed(true);
+                s.setAlgorithmicDarkeningAllowed(night);
             }
-            s.setForceDark(WebSettings.FORCE_DARK_ON);
+            s.setForceDark(night ? WebSettings.FORCE_DARK_ON : WebSettings.FORCE_DARK_OFF);
         }
 
-        // Тёмный фон вместо белых вспышек при навигации; без цветного свечения краёв
-        web.setBackgroundColor(0xFF0F0F0F);
+        // Фон WebView — по теме (ресурс сам разный для day/night), иначе при
+        // навигации видны белые или чёрные вспышки.
+        web.setBackgroundColor(getColor(R.color.background));
         web.setOverScrollMode(View.OVER_SCROLL_NEVER);
         // Чистый «апповый» вид: без системных скроллбаров
         web.setVerticalScrollBarEnabled(false);
@@ -384,11 +392,235 @@ public class MainActivity extends Activity {
         if (id >= 0) handleDownloadComplete(id);
     }
 
-    /** Инжекция VoT: сначала bootstrap (GM-полифиллы + настройки), затем сам скрипт. */
+    /** Ночной режим системы — стартовая догадка о теме интерфейса. */
+    private boolean isNightMode() {
+        int mode = getResources().getConfiguration().uiMode
+                & android.content.res.Configuration.UI_MODE_NIGHT_MASK;
+        return mode == android.content.res.Configuration.UI_MODE_NIGHT_YES;
+    }
+
+    /**
+     * Тема нашего интерфейса следует за страницей, а не за системой.
+     *
+     * <p>Почему: тему страницы задаёт сам YouTube (у пользователя она может быть
+     * закреплена в тёмной, независимо от системы). Проверено на эмуляторе: при
+     * светлой системе и сохранённой тёмной теме YouTube страница оставалась
+     * тёмной — светлый хром лежал бы на тёмной странице. Поэтому цвет хрома
+     * выбирается по фактическому фону страницы (см. syncChromeToPageTheme).
+     */
+    private boolean darkUi;
+    private android.content.res.Resources nightRes;
+    private android.content.res.Resources dayRes;
+
+    private void initUiTheme() {
+        darkUi = isNightMode();
+        nightRes = nightResources();
+        dayRes = dayResources();
+    }
+
+    private android.content.res.Resources themedResources(boolean night) {
+        int mode = getResources().getConfiguration().uiMode
+                & ~android.content.res.Configuration.UI_MODE_NIGHT_MASK;
+        android.content.res.Configuration cfg =
+                new android.content.res.Configuration(getResources().getConfiguration());
+        cfg.uiMode = mode | (night
+                ? android.content.res.Configuration.UI_MODE_NIGHT_YES
+                : android.content.res.Configuration.UI_MODE_NIGHT_NO);
+        return getBaseContext().createConfigurationContext(cfg).getResources();
+    }
+
+    private android.content.res.Resources nightResources() {
+        return themedResources(true);
+    }
+
+    private android.content.res.Resources dayResources() {
+        return themedResources(false);
+    }
+
+    /** Цвет ресурса в актуальной теме интерфейса (день/ночь), а не системы. */
+    private int uiColor(int resId) {
+        return (darkUi ? nightRes : dayRes).getColor(resId);
+    }
+
+    /**
+     * Подстраивает хром под фактическую тему страницы.
+     *
+     * <p>Тему страницы узнаём по её собственному фону: тёмный YouTube,
+     * сохранённый у пользователя, иначе дал бы тёмную страницу под светлым
+     * хромом (и наоборот).
+     */
+    private void syncChromeToPageTheme(String bgColor) {
+        boolean dark = isDarkCssColor(bgColor);
+        if (dark == darkUi) return;
+        darkUi = dark;
+        applyChromeColors();
+    }
+
+    /** «rgb(r,g,b)» / «rgba(r,g,b,a)» → тёмный ли цвет по воспринимаемой яркости. */
+    private static boolean isDarkCssColor(String css) {
+        if (css == null) return true;
+        int r = -1, g = -1, b = -1;
+        try {
+            String s = css.trim().replaceAll("[^0-9,]", "");
+            if (s.startsWith(",")) s = s.substring(1);
+            if (s.endsWith(",")) s = s.substring(0, s.length() - 1);
+            String[] p = s.split(",");
+            if (p.length < 3) return true;
+            r = Integer.parseInt(p[0].trim());
+            g = Integer.parseInt(p[1].trim());
+            b = Integer.parseInt(p[2].trim());
+        } catch (Exception e) {
+            return true;
+        }
+        // Воспринимаемая яркость по Rec. 709
+        double lum = (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255.0;
+        return lum < 0.35;
+    }
+
+    /**
+     * Перекрашивает AlertDialog под тему хрома.
+     *
+     * <p>Диалог по умолчанию берёт оформление из системной темы, а наш хром
+     * следует за страницей. Когда они расходятся (например, страница YouTube
+     * тёмная, а система в светлой), заголовки строк становились невидимыми:
+     * белый текст на светлом фоне. Поэтому красим окно, заголовок и кнопки явно.
+     */
+    private void applyDialogTheme(AlertDialog dialog) {
+        try {
+            android.view.Window w = dialog.getWindow();
+            if (w != null) {
+                w.setBackgroundDrawable(new android.graphics.drawable.ColorDrawable(
+                        uiColor(R.color.surface)));
+            }
+            TextView title = (TextView) dialog.findViewById(android.R.id.title);
+            if (title != null) title.setTextColor(uiColor(R.color.text_primary));
+            if (dialog.getButton(DialogInterface.BUTTON_NEGATIVE) != null) {
+                dialog.getButton(DialogInterface.BUTTON_NEGATIVE)
+                        .setTextColor(uiColor(R.color.accent));
+            }
+            if (dialog.getButton(DialogInterface.BUTTON_POSITIVE) != null) {
+                dialog.getButton(DialogInterface.BUTTON_POSITIVE)
+                        .setTextColor(uiColor(R.color.accent));
+            }
+        } catch (Exception ignored) {
+        }
+    }
+
+    private void applyChromeColors() {
+        // Тема активности — чтобы и диалоги (списки, кнопки, поля ввода) брали
+        // оформление хрома, а не системной темы: они расходятся, когда страница
+        // YouTube окрашена иначе, чем система.
+        try {
+            setTheme(darkUi ? R.style.Theme_YouTubeVot_Dark : R.style.Theme_YouTubeVot_Light);
+        } catch (Exception ignored) {
+        }
+        if (bottomBar != null) bottomBar.setBackgroundColor(uiColor(R.color.surface));
+        View div = findViewById(R.id.divider);
+        if (div != null) div.setBackgroundColor(uiColor(R.color.divider));
+        View dot = findViewById(R.id.dot_vpn);
+        if (dot != null) dot.setBackgroundResource(R.drawable.dot_vpn_on);
+        int iconTint = uiColor(R.color.icon);
+        if (btnBack != null) btnBack.setColorFilter(iconTint, PorterDuff.Mode.SRC_IN);
+        if (btnForward != null) btnForward.setColorFilter(iconTint, PorterDuff.Mode.SRC_IN);
+        if (btnRefresh != null) btnRefresh.setColorFilter(iconTint, PorterDuff.Mode.SRC_IN);
+        if (btnSettings != null) btnSettings.setColorFilter(iconTint, PorterDuff.Mode.SRC_IN);
+        getWindow().setNavigationBarColor(uiColor(R.color.background));
+        if (offlineOverlay != null) offlineOverlay.setBackgroundColor(uiColor(R.color.background));
+    }
+
+    /**
+     * Инжектится после userscript: его тема захардкожена в тёмную
+     * (--vot-surface-rgb:32,33,36 и т.д., prefers-color-scheme в скрипте нет),
+     * поэтому в светлом режиме оверлей VoT оставался бы тёмным поверх
+     * светлой страницы. Переопределяем переменные темы и пару мест, где
+     * тёмный цвет был вписан литералом.
+     */
+    private String votLightThemeCss() {
+        return "(function(){"
+                + "if(document.getElementById('vot-light-theme'))return;"
+                + "var s=document.createElement('style');s.id='vot-light-theme';"
+                + "s.textContent=':root{"
+                + "--vot-surface-rgb:249,249,249;"
+                + "--vot-onsurface-rgb:15,15,15;"
+                + "--vot-onprimary-rgb:255,255,255;"
+                + "--vot-primary-rgb:199,0,42;"
+                + "--vot-subtitles-color:rgb(15,15,15);"
+                + "}"
+                + ".vot-select-content-item:hover{background-color:rgba(15,15,15,.08)!important}"
+                + ".vot-subtitles{--vot-subtitles-text-stroke-color:rgba(255,255,255,.9)!important;"
+                + "--vot-subtitles-text-shadow:none!important;"
+                + "--vot-subtitles-hover-color:rgba(15,15,15,.1)!important}"
+                + ".vot-subtitles-info,.vot-tooltip--subtitles-info .vot-subtitles-info{"
+                + "background:rgba(255,255,255,.96)!important;color:#0f0f0f!important;"
+                + "border-color:rgba(0,0,0,.12)!important;box-shadow:0 12px 32px rgba(0,0,0,.18)!important}"
+                + ".vot-subtitles-info-title,.vot-subtitles-info-header{color:#0f0f0f!important}"
+                + ".vot-subtitles-info-source,.vot-subtitles-info-context{color:rgba(15,15,15,.72)!important}"
+                + ".vot-subtitles-info-divider{color:rgba(15,15,15,.45)!important}"
+                + ".vot-subtitles-info-service{color:rgba(15,15,15,.6)!important}"
+                + "';"
+                + "(document.head||document.documentElement).appendChild(s);})();";
+    }
+
+    /**
+     * Явная тёмная тема оверлея. Скрипт уже тёмный по умолчанию, но если раньше
+     * была вставлена светлая тема (пользователь переключил тему YouTube на
+     * странице), её нужно вернуть обратно — поэтому и для тёмной темы
+     * переопределяем переменные явно.
+     */
+    private String votDarkThemeCss() {
+        return "(function(){"
+                + "var s=document.getElementById('vot-light-theme');if(!s)return;"
+                + "s.textContent=':root{"
+                + "--vot-surface-rgb:32,33,36;"
+                + "--vot-onsurface-rgb:227,227,227;"
+                + "--vot-onprimary-rgb:32,33,36;"
+                + "--vot-primary-rgb:139,180,245;"
+                + "--vot-subtitles-color:rgb(227,227,227);"
+                + "}"
+                + ".vot-subtitles{--vot-subtitles-text-stroke-color:rgba(0,0,0,.92)!important;"
+                + "--vot-subtitles-text-shadow:0 1px 2px #00000073,0 2px 8px #00000040!important;"
+                + "--vot-subtitles-hover-color:rgba(255,255,255,.55)!important}"
+                + ".vot-subtitles-info,.vot-tooltip--subtitles-info .vot-subtitles-info{"
+                + "background:rgba(31,32,35,.96)!important;color:#f5f7fa!important;"
+                + "border-color:rgba(255,255,255,.08)!important;"
+                + "box-shadow:0 12px 32px rgba(0,0,0,.47)!important}"
+                + ".vot-subtitles-info-title,.vot-subtitles-info-header{color:#fff!important}"
+                + ".vot-subtitles-info-source,.vot-subtitles-info-context"
+                + "{color:rgba(245,247,250,.72)!important}"
+                + ".vot-subtitles-info-divider{color:rgba(245,247,250,.45)!important}"
+                + ".vot-subtitles-info-service{color:rgba(245,247,250,.6)!important}"
+                + "';})();";
+    }
+
+    /** Инжекция VoT: bootstrap- полифиллы + сам скрипт + тема оверлея. */
     private void injectVot(WebView view) {
         if (!view.getUrl().startsWith("http")) return;
         view.evaluateJavascript(readAsset(VOT_BOOTSTRAP), null);
         view.evaluateJavascript(readAsset(VOT_BUNDLE), null);
+        // Тема страницы принадлежит YouTube и может не совпадать с системной
+        // (пользователь мог закрепить тёмную тему на сайте). Поэтому после
+        // отрисовки читаем фактический фон страницы и по нему выбираем тему
+        // нашего хрома и оверлея.
+        view.postDelayed(new Runnable() {
+            @Override
+            public void run() {
+                web.evaluateJavascript(
+                        "(function(){var b=getComputedStyle(document.body).backgroundColor;"
+                                + "var h=getComputedStyle(document.documentElement).backgroundColor;"
+                                + "return b&&b!=='rgba(0, 0, 0, 0)'?b:h;})();",
+                        new ValueCallback<String>() {
+                            @Override
+                            public void onReceiveValue(String value) {
+                                if (value == null) return;
+                                syncChromeToPageTheme(value.replace("\"", ""));
+                                // Оверлей скрипта тёмно-захардкожен — красим его
+                                // под фактическую тему страницы.
+                                web.evaluateJavascript(
+                                        darkUi ? votDarkThemeCss() : votLightThemeCss(), null);
+                            }
+                        });
+            }
+        }, 600);
     }
 
     private String readAsset(String path) {
@@ -719,6 +951,9 @@ public class MainActivity extends Activity {
     /* ---------------- Настройки приложения ---------------- */
 
     private void showSettingsDialog() {
+        // Диалоги должны быть оформлены как хром, а не как системная тема
+        // (страница YouTube может быть темнее/светлее системы).
+        applyChromeColors();
         SharedPreferences prefs = regionPrefs();
         final AlertDialog[] holder = new AlertDialog[1];
 
@@ -859,6 +1094,7 @@ public class MainActivity extends Activity {
                 .create();
         holder[0] = dialog;
         dialog.show();
+        applyDialogTheme(dialog);
         // При закрытии сверяем индикатор с фактическим состоянием (сервис мог
         // не стартовать, например, если системный VPN не разрешён).
         dialog.setOnDismissListener(new DialogInterface.OnDismissListener() {
@@ -878,7 +1114,7 @@ public class MainActivity extends Activity {
     private TextView sectionHeader(String title) {
         TextView tv = new TextView(this);
         tv.setText(title);
-        tv.setTextColor(getColor(R.color.text_section));
+        tv.setTextColor(uiColor(R.color.text_section));
         tv.setTextSize(11);
         tv.setLetterSpacing(0.08f);
         tv.setPadding(dp(20), dp(20), dp(20), dp(6));
@@ -893,7 +1129,7 @@ public class MainActivity extends Activity {
     private TextView setRowState(LinearLayout row, String state) {
         TextView tv = new TextView(this);
         tv.setText(state);
-        tv.setTextColor(getColor(R.color.text_secondary));
+        tv.setTextColor(uiColor(R.color.text_secondary));
         tv.setTextSize(13);
         tv.setMaxLines(2);
         LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
@@ -973,8 +1209,10 @@ public class MainActivity extends Activity {
         getTheme().resolveAttribute(android.R.attr.selectableItemBackground, ripple, true);
         row.setBackgroundResource(ripple.resourceId);
 
-        int tint = danger ? getColor(R.color.danger) : getColor(R.color.icon_inactive);
-        int titleColor = danger ? getColor(R.color.danger) : getColor(R.color.text_primary);
+        // Цвета берём из темы хрома (следует за страницей), а не из темы системы —
+        // иначе настройки могут оказаться светлыми на тёмной странице.
+        int tint = danger ? uiColor(R.color.danger) : uiColor(R.color.icon_inactive);
+        int titleColor = danger ? uiColor(R.color.danger) : uiColor(R.color.text_primary);
 
         ImageView icon = new ImageView(this);
         icon.setImageResource(iconRes);
@@ -998,7 +1236,7 @@ public class MainActivity extends Activity {
         if (subtitle != null && !subtitle.isEmpty()) {
             TextView subView = new TextView(this);
             subView.setText(subtitle);
-            subView.setTextColor(getColor(R.color.text_secondary));
+            subView.setTextColor(uiColor(R.color.text_secondary));
             subView.setTextSize(13);
             // Раньше стоял singleLine — длинные подписи («Без root, через
             // системный VPN…») уезжали под тумблер и читались как «ветка b».

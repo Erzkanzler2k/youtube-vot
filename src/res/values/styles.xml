@@ -1,7 +1,18 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <!-- Базовая тема (API < 31). На API 31+ переопределяется в values-v31/styles.xml -->
-    <style name="Theme.YouTubeVot" parent="@android:style/Theme.Material.NoActionBar.Fullscreen">
+    <!-- Базовая (дневная) тема. На API 31+ переопределяется в values-v31/styles.xml,
+         ночная — в values-night/styles.xml. -->
+    <style name="Theme.YouTubeVot" parent="@android:style/Theme.Material.Light.NoActionBar.Fullscreen">
+        <item name="android:windowLayoutInDisplayCutoutMode">shortEdges</item>
+    </style>
+
+    <!-- Явные варианты для переключения темы в рантайме (setTheme): тема интерфейса
+         следует за страницей YouTube, а не только за системной. -->
+    <style name="Theme.YouTubeVot.Light" parent="@android:style/Theme.Material.Light.NoActionBar.Fullscreen">
+        <item name="android:windowLayoutInDisplayCutoutMode">shortEdges</item>
+    </style>
+
+    <style name="Theme.YouTubeVot.Dark" parent="@android:style/Theme.Material.NoActionBar.Fullscreen">
         <item name="android:windowLayoutInDisplayCutoutMode">shortEdges</item>
     </style>
 </resources>

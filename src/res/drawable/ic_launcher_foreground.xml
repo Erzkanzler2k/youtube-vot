@@ -4,8 +4,24 @@
     android:height="108dp"
     android:viewportWidth="108"
     android:viewportHeight="108">
-    <!-- Белый «play» в безопасной зоне адаптивной иконки -->
+    <!--
+        Фирменный знак: play + звуковые волны (продукт = закадровый перевод).
+        Отличается от логотипа YouTube, который читается как «ещё один YouTube».
+        Всё внутри безопасной зоны адаптивной иконки (центр 72×72, т.е. 18…90).
+    -->
     <path
         android:fillColor="#FFFFFFFF"
-        android:pathData="M40,34 L40,74 L74,54 Z" />
+        android:pathData="M38,36 L38,72 L71,54 Z" />
+    <path
+        android:strokeColor="#FFFFFFFF"
+        android:strokeWidth="4.5"
+        android:strokeLineCap="round"
+        android:fillColor="#00000000"
+        android:pathData="M78,44 C82,48 82,60 78,64" />
+    <path
+        android:strokeColor="#FFFFFFFF"
+        android:strokeWidth="4.5"
+        android:strokeLineCap="round"
+        android:fillColor="#00000000"
+        android:pathData="M86,37 C93,44 93,64 86,71" />
 </vector>

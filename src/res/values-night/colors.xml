@@ -1,0 +1,16 @@
+<resources>
+    <!-- Тёмная палитра (системная ночная тема) -->
+    <color name="background">#FF0F0F0F</color>
+    <color name="surface">#FF1A1A1A</color>
+    <color name="surface_variant">#FF222222</color>
+    <color name="divider">#FF2A2A2A</color>
+    <color name="text_primary">#FFFFFFFF</color>
+    <color name="text_secondary">#FFC4C4C4</color>
+    <color name="text_section">#FF8F8F8F</color>
+    <color name="danger">#FFFF7A7A</color>
+    <color name="icon_inactive">#FF9AA0A6</color>
+    <!-- Фирменный акцент YouTube -->
+    <color name="accent">#FFFF0033</color>
+    <color name="icon">#FFFFFFFF</color>
+    <color name="progress_bg">#33FFFFFF</color>
+</resources>

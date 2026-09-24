@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Нативный сплэш Android 12+ в тёмной теме -->
+    <style name="Theme.YouTubeVot" parent="@android:style/Theme.Material.NoActionBar.Fullscreen">
+        <item name="android:windowSplashScreenBackground">#FF0F0F0F</item>
+        <item name="android:windowSplashScreenAnimatedIcon">@mipmap/ic_launcher</item>
+        <item name="android:windowSplashScreenIconBackgroundColor">#FF0F0F0F</item>
+        <item name="android:windowLayoutInDisplayCutoutMode">shortEdges</item>
+    </style>
+</resources>
