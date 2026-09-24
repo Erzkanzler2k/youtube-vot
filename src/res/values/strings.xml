@@ -25,7 +25,7 @@
     <string name="update_no_new">Установлена последняя версия.</string>
     <string name="settings_bypass">Обход блокировок (VPN)</string>
     <string name="settings_bypass_desc">Без root, через системный VPN — ветка bypass</string>
-    <string name="bypass_not_ready">Движок обхода ещё в разработке (ветка bypass) — включение отложено до следующего этапа.</string>
+    <string name="bypass_not_ready">Движок обхода не готов (ветка bypass) — включение отменено.</string>
     <string name="bypass_notif_title">YouTube VoT: обход включён</string>
     <string name="bypass_notif_text">Весь трафик идёт через DPI-обход</string>
     <string name="settings_worker">Сервер перевода</string>

@@ -6,10 +6,11 @@
  * TUN и перехватывает трафик. DPI-обход (аналог zapret/ByeDPI) выполняет
  * BypassEngine поверх TUN.
  *
- * Текущий статус (этап 1): инфраструктура готова — разрешение, сервис,
- * foreground-уведомление, TUN, связка с настройками. Сам движок
- * (BypassEngine.isAvailable()) пока выключен, поэтому сервис НЕ поднимает
- * VPN в этом этапе — чтобы недоработанный перехват не отрубил интернет.
+ * Статус (этап 2): движок реализован и доступен (BypassEngine.isAvailable()
+ * возвращает true). В TUN попадает ТОЛЬКО трафик нашего приложения и
+ * WebView-провайдеров (all-disallow + allowlist) — остальные приложения
+ * работают как раньше, мимо VPN. Если движок падает — сервис сам
+ * останавливается и VPN снимается, интернет остаётся живым.
  *
  * Без AndroidX: только платформенные API. Java 8-совместимый код.
  */
@@ -21,6 +22,8 @@ import android.app.NotificationManager;
 import android.app.PendingIntent;
 import android.app.Service;
 import android.content.Intent;
+import android.content.pm.ApplicationInfo;
+import android.content.pm.PackageManager;
 import android.net.VpnService;
 import android.os.Build;
 import android.os.IBinder;
@@ -28,6 +31,7 @@ import android.os.ParcelFileDescriptor;
 import android.util.Log;
 
 import java.io.IOException;
+import java.util.List;
 
 public class BypassVpnService extends VpnService {
     private static final String TAG = "YouTubeVotBypass";
@@ -66,7 +70,7 @@ public class BypassVpnService extends VpnService {
         startForeground(NOTIF_ID, buildNotification());
 
         if (!BypassEngine.isAvailable()) {
-            // Этап 1: движок ещё не готов — не поднимаем VPN, чтобы не отрубить интернет.
+            // Движок должен быть доступен всегда (этап 2+); если нет — не поднимаем VPN.
             Log.i(TAG, "engine not ready, refusing to establish VPN");
             setEnabled(false);
             stopSelf();
@@ -75,7 +79,12 @@ public class BypassVpnService extends VpnService {
 
         try {
             ParcelFileDescriptor tun = establishTun();
-            engine = new BypassEngine(tun);
+            engine = new BypassEngine(tun, this, new Runnable() {
+                @Override
+                public void run() {
+                    stopSelf();
+                }
+            });
             engine.start();
             running = true;
             setEnabled(true);
@@ -87,6 +96,14 @@ public class BypassVpnService extends VpnService {
         return START_STICKY;
     }
 
+    /** Пакеты, чей трафик разрешён в VPN (наше приложение + WebView-провайдеры). */
+    private static final String[] ALLOWED_PKGS = {
+            "com.vot.youtube",
+            "com.google.android.webview",
+            "com.android.webview",
+            "com.google.android.trichromelibrary"
+    };
+
     /** Создаёт TUN-интерфейс и перехватывает весь трафик устройства. */
     private ParcelFileDescriptor establishTun() throws Exception {
         Builder b = new Builder();
@@ -94,11 +111,34 @@ public class BypassVpnService extends VpnService {
         b.addAddress("10.9.0.2", 24);
         b.addRoute("0.0.0.0", 0);
         b.addDnsServer("77.88.8.8");
-        b.addDnsServer("8.8.8.8");
+        b.addDnsServer("77.88.8.1");
+        denyOtherApps(b);
         b.setBlocking(true);
         ParcelFileDescriptor tun = b.establish();
         if (tun == null) throw new IllegalStateException("establish() returned null");
         return tun;
+    }
+
+    /** Пропускает через VPN только наше приложение и WebView-провайдеров;
+     *  остальные приложения работают мимо VPN — интернет не ломаем. */
+    private void denyOtherApps(Builder b) {
+        PackageManager pm = getPackageManager();
+        List<ApplicationInfo> apps = pm.getInstalledApplications(0);
+        for (ApplicationInfo ai : apps) {
+            if (isAllowedPkg(ai.packageName)) continue;
+            try {
+                b.addDisallowedApplication(ai.packageName);
+            } catch (Exception ignored) {
+                // невалидный пакет — пропускаем
+            }
+        }
+    }
+
+    private boolean isAllowedPkg(String pkg) {
+        for (String a : ALLOWED_PKGS) {
+            if (a.equals(pkg)) return true;
+        }
+        return false;
     }
 
     @Override
