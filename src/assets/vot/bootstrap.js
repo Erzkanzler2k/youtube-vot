@@ -84,7 +84,7 @@
     responseLanguage: 'ru',        // язык перевода озвучки
     responseLanguageSubtitles: 'auto',
     autoTranslate: true,           // автоматический перевод при открытии видео
-    autoSubtitles: true,           // автоматическое включение субтитров
+    autoSubtitles: false,          // авто-субтитры отключены (эта сборка)
     translateProxyEnabledDefault: true
   };
   var ls = LS();
@@ -95,6 +95,8 @@
           ls.setItem(key, JSON.stringify(preset[key]));
         }
       }
+      // Жёстко выключаем авто-субтитры: перекрывает сохранённое true из прошлых версий
+      ls.setItem('autoSubtitles', JSON.stringify(false));
     } catch (e) {}
   }
 

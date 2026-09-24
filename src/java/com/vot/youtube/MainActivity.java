@@ -19,6 +19,7 @@ import android.content.SharedPreferences;
 import android.content.pm.ActivityInfo;
 import android.content.res.AssetManager;
 import android.graphics.Color;
+import android.graphics.Insets;
 import android.graphics.PorterDuff;
 import android.net.ConnectivityManager;
 import android.net.Network;
@@ -28,9 +29,11 @@ import android.os.Build;
 import android.os.Bundle;
 import android.os.Environment;
 import android.provider.MediaStore;
+import android.view.DisplayCutout;
 import android.view.HapticFeedbackConstants;
 import android.view.View;
 import android.view.ViewGroup;
+import android.view.WindowInsets;
 import android.webkit.CookieManager;
 import android.webkit.DownloadListener;
 import android.webkit.URLUtil;
@@ -80,6 +83,10 @@ public class MainActivity extends Activity {
     private View offlineOverlay;
     private ConnectivityManager.NetworkCallback netCallback;
 
+    // Базовые отступы панелей (без системных инсетов), чтобы корректно дополнять их
+    private int topBarBaseStart, topBarBaseEnd, topBarBaseTop, topBarBaseBottom;
+    private int bottomBarBaseStart, bottomBarBaseEnd, bottomBarBaseTop, bottomBarBaseBottom;
+
     // Нижняя навигация: Главная / Shorts / Популярное
     private static final int[] TAB_ROOT_IDS = {R.id.tab_home, R.id.tab_shorts, R.id.tab_trending};
     private static final int[] TAB_IND_IDS = {R.id.tab_home_ind, R.id.tab_shorts_ind, R.id.tab_trending_ind};
@@ -106,6 +113,7 @@ public class MainActivity extends Activity {
         customViewContainer = findViewById(R.id.custom_view_container);
         topBar = findViewById(R.id.top_bar);
         bottomBar = findViewById(R.id.bottom_bar);
+        setupSystemBars();
         web = findViewById(R.id.web);
         progressBar = findViewById(R.id.progress);
         splashOverlay = findViewById(R.id.splash_overlay);
@@ -415,6 +423,66 @@ public class MainActivity extends Activity {
         } catch (ActivityNotFoundException e) {
             Toast.makeText(this, url, Toast.LENGTH_SHORT).show();
         }
+    }
+
+    /* ---------------- Безопасные зоны (вырез камеры, статус-бар, жесты) ---------------- */
+
+    /** Слушаем системные инсеты и отодвигаем панели от выреза камеры и жестовой зоны. */
+    private void setupSystemBars() {
+        if (topBar == null || bottomBar == null) return;
+        topBarBaseStart = topBar.getPaddingStart();
+        topBarBaseEnd = topBar.getPaddingEnd();
+        topBarBaseTop = topBar.getPaddingTop();
+        topBarBaseBottom = topBar.getPaddingBottom();
+        bottomBarBaseStart = bottomBar.getPaddingStart();
+        bottomBarBaseEnd = bottomBar.getPaddingEnd();
+        bottomBarBaseTop = bottomBar.getPaddingTop();
+        bottomBarBaseBottom = bottomBar.getPaddingBottom();
+        final View root = findViewById(R.id.root_container);
+        if (root == null) return;
+        root.setOnApplyWindowInsetsListener(new View.OnApplyWindowInsetsListener() {
+            @Override
+            public WindowInsets onApplyWindowInsets(View v, WindowInsets insets) {
+                applySafeInsets(insets);
+                return insets;
+            }
+        });
+    }
+
+    /**
+     * Считает безопасные отступы (статус-бар, навигация, вырез камеры)
+     * и применяет их к панелям: верх — под камеру/статус-бар, низ — над жестами.
+     */
+    private void applySafeInsets(WindowInsets insets) {
+        if (topBar == null || bottomBar == null) return;
+        int left = 0, top = 0, right = 0, bottom = 0;
+        if (Build.VERSION.SDK_INT >= 30) {
+            Insets si = insets.getInsets(WindowInsets.Type.systemBars());
+            left = si.left;
+            top = si.top;
+            right = si.right;
+            bottom = si.bottom;
+        } else {
+            left = insets.getSystemWindowInsetLeft();
+            top = insets.getSystemWindowInsetTop();
+            right = insets.getSystemWindowInsetRight();
+            bottom = insets.getSystemWindowInsetBottom();
+        }
+        if (Build.VERSION.SDK_INT >= 28) {
+            DisplayCutout cutout = insets.getDisplayCutout();
+            if (cutout != null) {
+                top = Math.max(top, cutout.getSafeInsetTop());
+                bottom = Math.max(bottom, cutout.getSafeInsetBottom());
+                left = Math.max(left, cutout.getSafeInsetLeft());
+                right = Math.max(right, cutout.getSafeInsetRight());
+            }
+        }
+        topBar.setPaddingRelative(topBarBaseStart + left, topBarBaseTop + top,
+                topBarBaseEnd + right, topBarBaseBottom);
+        bottomBar.setPaddingRelative(bottomBarBaseStart + left, bottomBarBaseTop,
+                bottomBarBaseEnd + right, bottomBarBaseBottom + bottom);
+        View root = findViewById(R.id.root_container);
+        if (root != null) root.setPadding(left, 0, right, 0);
     }
 
     /** Обычный режим: статус-бар скрыт, навигационная панель видна (в цвет фона). */
