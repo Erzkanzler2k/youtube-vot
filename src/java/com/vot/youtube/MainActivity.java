@@ -6,6 +6,8 @@
  */
 package com.vot.youtube;
 
+import android.animation.ObjectAnimator;
+import android.animation.ValueAnimator;
 import android.annotation.SuppressLint;
 import android.app.Activity;
 import android.content.ActivityNotFoundException;
@@ -66,6 +68,8 @@ public class MainActivity extends Activity {
     private WebChromeClient.CustomViewCallback customViewCallback;
     private ProgressBar progressBar;
     private ImageView btnBack, btnForward;
+    private View splashOverlay;
+    private ObjectAnimator splashPulse;
 
     // Нижняя навигация: Главная / Shorts / Популярное
     private static final int[] TAB_ROOT_IDS = {R.id.tab_home, R.id.tab_shorts, R.id.tab_trending};
@@ -95,6 +99,8 @@ public class MainActivity extends Activity {
         bottomBar = findViewById(R.id.bottom_bar);
         web = findViewById(R.id.web);
         progressBar = findViewById(R.id.progress);
+        splashOverlay = findViewById(R.id.splash_overlay);
+        startSplashPulse();
         btnBack = findViewById(R.id.btn_back);
         btnForward = findViewById(R.id.btn_forward);
 
@@ -142,6 +148,7 @@ public class MainActivity extends Activity {
             public void onPageFinished(WebView view, String url) {
                 updateNavState();
                 updateActiveTab();
+                hideSplash();
                 view.animate().alpha(1f).setDuration(220).start();
             }
 
@@ -466,6 +473,35 @@ public class MainActivity extends Activity {
                         v.animate().scaleX(1f).scaleY(1f).setDuration(130).start();
                     }
                 });
+    }
+
+    /** Пульс иконки на загрузочном экране (бесконечная анимация прозрачности). */
+    private void startSplashPulse() {
+        if (splashOverlay == null) return;
+        ImageView icon = findViewById(R.id.splash_icon);
+        if (splashPulse == null) {
+            splashPulse = ObjectAnimator.ofFloat(icon, "alpha", 1f, 0.35f);
+            splashPulse.setDuration(700);
+            splashPulse.setRepeatCount(ValueAnimator.INFINITE);
+            splashPulse.setRepeatMode(ValueAnimator.REVERSE);
+            splashPulse.start();
+        }
+    }
+
+    /** Плавное исчезновение сплэша после первой загрузки страницы. */
+    private void hideSplash() {
+        if (splashOverlay == null || splashOverlay.getVisibility() != View.VISIBLE) return;
+        if (splashPulse != null) {
+            splashPulse.cancel();
+            splashPulse = null;
+        }
+        splashOverlay.animate().alpha(0f).setDuration(250).withEndAction(new Runnable() {
+            @Override
+            public void run() {
+                splashOverlay.setVisibility(View.GONE);
+                splashOverlay.setAlpha(1f);
+            }
+        });
     }
 
     @Override
