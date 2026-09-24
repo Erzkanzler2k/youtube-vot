@@ -31,8 +31,9 @@ import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
 import android.webkit.ValueCallback;
-import android.widget.Button;
 import android.widget.FrameLayout;
+import android.widget.ImageView;
+import android.widget.ProgressBar;
 import android.widget.TextView;
 import android.widget.Toast;
 
@@ -58,7 +59,8 @@ public class MainActivity extends Activity {
     private FrameLayout customViewContainer;
     private View customView;
     private WebChromeClient.CustomViewCallback customViewCallback;
-    private TextView progressText;
+    private ProgressBar progressBar;
+    private ImageView btnBack, btnForward;
 
     @SuppressLint("SetJavaScriptEnabled")
     @Override
@@ -66,8 +68,16 @@ public class MainActivity extends Activity {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_main);
 
+        // Тёмная системная панель в цвет YouTube; статус-бар скрыт (вид медиа-приложения)
+        getWindow().setNavigationBarColor(0xFF0F0F0F);
+        getWindow().setStatusBarColor(Color.TRANSPARENT);
+        setNormalSystemUi();
+
         customViewContainer = findViewById(R.id.custom_view_container);
         web = findViewById(R.id.web);
+        progressBar = findViewById(R.id.progress);
+        btnBack = findViewById(R.id.btn_back);
+        btnForward = findViewById(R.id.btn_forward);
 
         WebSettings s = web.getSettings();
         s.setJavaScriptEnabled(true);
@@ -83,12 +93,22 @@ public class MainActivity extends Activity {
         s.setMixedContentMode(WebSettings.MIXED_CONTENT_NEVER_ALLOW);
         s.setUserAgentString(USER_AGENT);
 
+        // Тёмный фон вместо белых вспышек при навигации; без цветного свечения краёв
+        web.setBackgroundColor(0xFF0F0F0F);
+        web.setOverScrollMode(View.OVER_SCROLL_NEVER);
+
         CookieManager.getInstance().setAcceptThirdPartyCookies(web, true);
 
         web.setWebViewClient(new WebViewClient() {
             @Override
             public void onPageStarted(WebView view, String url, android.graphics.Bitmap favicon) {
                 injectVot(view);
+                updateNavState();
+            }
+
+            @Override
+            public void onPageFinished(WebView view, String url) {
+                updateNavState();
             }
 
             @Override
@@ -111,9 +131,11 @@ public class MainActivity extends Activity {
         web.setWebChromeClient(new WebChromeClient() {
             @Override
             public void onProgressChanged(WebView view, int newProgress) {
-                if (progressText != null) {
-                    progressText.setText(newProgress < 100 ? newProgress + "%" : "");
+                if (progressBar != null) {
+                    progressBar.setProgress(newProgress);
+                    progressBar.setVisibility(newProgress >= 100 ? View.GONE : View.VISIBLE);
                 }
+                updateNavState();
             }
 
             @Override
@@ -130,7 +152,7 @@ public class MainActivity extends Activity {
                                 ViewGroup.LayoutParams.MATCH_PARENT,
                                 ViewGroup.LayoutParams.MATCH_PARENT));
                 web.setVisibility(View.GONE);
-                hideSystemUi(true);
+                setImmersiveSystemUi();
             }
 
             @Override
@@ -140,7 +162,7 @@ public class MainActivity extends Activity {
                 customView = null;
                 customViewContainer.setVisibility(View.GONE);
                 web.setVisibility(View.VISIBLE);
-                hideSystemUi(false);
+                setNormalSystemUi();
                 if (customViewCallback != null) {
                     customViewCallback.onCustomViewHidden();
                     customViewCallback = null;
@@ -156,14 +178,26 @@ public class MainActivity extends Activity {
             }
         });
 
-        Button refresh = findViewById(R.id.btn_refresh);
+        btnBack.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                if (web.canGoBack()) web.goBack();
+            }
+        });
+        btnForward.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                if (web.canGoForward()) web.goForward();
+            }
+        });
+        ImageView refresh = findViewById(R.id.btn_refresh);
         refresh.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
                 web.reload();
             }
         });
-        Button exit = findViewById(R.id.btn_exit);
+        ImageView exit = findViewById(R.id.btn_exit);
         exit.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
@@ -289,18 +323,34 @@ public class MainActivity extends Activity {
         }
     }
 
-    private void hideSystemUi(boolean immersive) {
-        if (immersive) {
-            getWindow().getDecorView().setSystemUiVisibility(
-                    View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
-                            | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
-                            | View.SYSTEM_UI_FLAG_FULLSCREEN
-                            | View.SYSTEM_UI_FLAG_LAYOUT_STABLE
-                            | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
-                            | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN);
-        } else {
-            getWindow().getDecorView().setSystemUiVisibility(View.SYSTEM_UI_FLAG_VISIBLE);
-        }
+    /** Обычный режим: статус-бар скрыт, навигационная панель видна (в цвет фона). */
+    private void setNormalSystemUi() {
+        getWindow().getDecorView().setSystemUiVisibility(
+                View.SYSTEM_UI_FLAG_FULLSCREEN
+                        | View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+                        | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN);
+    }
+
+    /** Полноэкранное видео: скрываем всё системное UI (immerse-sticky). */
+    private void setImmersiveSystemUi() {
+        getWindow().getDecorView().setSystemUiVisibility(
+                View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
+                        | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
+                        | View.SYSTEM_UI_FLAG_FULLSCREEN
+                        | View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+                        | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
+                        | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN);
+    }
+
+    /** Назад/вперёд доступны только когда есть история. */
+    private void updateNavState() {
+        if (btnBack == null || btnForward == null) return;
+        boolean back = web.canGoBack();
+        boolean forward = web.canGoForward();
+        btnBack.setEnabled(back);
+        btnBack.setAlpha(back ? 1f : 0.35f);
+        btnForward.setEnabled(forward);
+        btnForward.setAlpha(forward ? 1f : 0.35f);
     }
 
     @Override

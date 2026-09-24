@@ -3,27 +3,27 @@
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:orientation="vertical"
-    android:background="#0F0F0F">
+    android:background="@color/background">
 
-    <!-- Верхняя панель -->
+    <!-- Верхняя панель (surface, 8pt-сетка) -->
     <LinearLayout
         android:id="@+id/top_bar"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:orientation="horizontal"
         android:gravity="center_vertical"
-        android:background="#1A1A1A"
+        android:background="@color/surface"
         android:paddingStart="14dp"
-        android:paddingEnd="4dp"
-        android:paddingTop="8dp"
-        android:paddingBottom="8dp">
+        android:paddingEnd="8dp"
+        android:paddingTop="6dp"
+        android:paddingBottom="6dp">
 
         <TextView
             android:id="@+id/title"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:text="@string/app_name"
-            android:textColor="#FFFFFFFF"
+            android:textColor="@color/text_primary"
             android:textSize="17sp"
             android:textStyle="bold" />
 
@@ -32,34 +32,72 @@
             android:layout_height="1dp"
             android:layout_weight="1" />
 
-        <Button
+        <!-- Тач-таргеты 48dp, иконки Material 24dp -->
+        <ImageView
+            android:id="@+id/btn_back"
+            android:layout_width="48dp"
+            android:layout_height="48dp"
+            android:padding="12dp"
+            android:src="@drawable/ic_back"
+            android:tint="@color/icon"
+            android:clickable="true"
+            android:focusable="true"
+            android:alpha="0.35"
+            android:contentDescription="@string/nav_back" />
+
+        <ImageView
+            android:id="@+id/btn_forward"
+            android:layout_width="48dp"
+            android:layout_height="48dp"
+            android:padding="12dp"
+            android:src="@drawable/ic_forward"
+            android:tint="@color/icon"
+            android:clickable="true"
+            android:focusable="true"
+            android:alpha="0.35"
+            android:contentDescription="@string/nav_forward" />
+
+        <ImageView
             android:id="@+id/btn_refresh"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            style="?android:attr/borderlessButtonStyle"
-            android:text="⟳"
-            android:textSize="20sp"
-            android:textColor="#FFFFFFFF"
-            android:minWidth="48dp"
+            android:layout_width="48dp"
+            android:layout_height="48dp"
+            android:padding="12dp"
+            android:src="@drawable/ic_refresh"
+            android:tint="@color/icon"
+            android:clickable="true"
+            android:focusable="true"
             android:contentDescription="@string/refresh" />
 
-        <Button
+        <ImageView
             android:id="@+id/btn_exit"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            style="?android:attr/borderlessButtonStyle"
-            android:text="✕"
-            android:textSize="20sp"
-            android:textColor="#FFFFFFFF"
-            android:minWidth="48dp"
+            android:layout_width="48dp"
+            android:layout_height="48dp"
+            android:padding="12dp"
+            android:src="@drawable/ic_close"
+            android:tint="@color/icon"
+            android:clickable="true"
+            android:focusable="true"
             android:contentDescription="@string/exit" />
     </LinearLayout>
+
+    <!-- Тонкий прогресс-бар загрузки -->
+    <ProgressBar
+        android:id="@+id/progress"
+        style="?android:attr/progressBarStyleHorizontal"
+        android:layout_width="match_parent"
+        android:layout_height="3dp"
+        android:max="100"
+        android:progress="0"
+        android:progressTint="@color/accent"
+        android:progressBackgroundTint="@color/progress_bg"
+        android:visibility="gone" />
 
     <WebView
         android:id="@+id/web"
         android:layout_width="match_parent"
         android:layout_height="0dp"
-        android:layout_weight="1" />
+        android:layout_weight="1"
+        android:background="@color/background" />
 
     <!-- Контейнер для полноэкранного видео -->
     <FrameLayout

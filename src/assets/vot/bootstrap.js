@@ -106,7 +106,9 @@
       /* реклама в плеере */
       '#player-ads,#masthead-ad,.video-ads,.ad-container,.ad-div,.ytp-ad-overlay-container,.ytp-ad-text-overlay,.ytp-ad-image-overlay,.ytp-ad-player-overlay,.ytp-ad-skip-button-container{display:none!important}',
       /* кнопка «Войти» (CTA-кнопки) */
-      '.yt-spec-button-shape-next--call-to-action{display:none!important}'
+      '.yt-spec-button-shape-next--call-to-action{display:none!important}',
+      /* банеры «Откройте в приложении YouTube» и cookie/consent-попапы */
+      'ytd-app-banner,#app-banner,ytm-app-promo-renderer,ytm-promo-sheet-renderer,ytm-mealbar-promo-renderer,ytd-mealbar-promo-renderer,#player-mealbar,ytm-consent-bump-v3-renderer,ytm-consent-bump-renderer,ytd-consent-bump-lightbox,#consent-bump{display:none!important}'
     ].join('\n');
     if (typeof globalThis.GM_addStyle === 'function') {
       globalThis.GM_addStyle(css);
@@ -114,6 +116,34 @@
       var st = document.createElement('style');
       st.textContent = css;
       (document.head || document.documentElement).appendChild(st);
+    }
+  })();
+
+  /* ---------- Чистильщик навязчивых банеров (динамически подгружаемых) ---------- */
+  /* Удаляет узлы целиком (а не только скрывает), чтобы они не перехватывали клики. */
+  (function () {
+    var SEL = [
+      'ytd-app-banner', '#app-banner', 'ytm-app-promo-renderer', 'ytm-promo-sheet-renderer',
+      'ytm-mealbar-promo-renderer', 'ytd-mealbar-promo-renderer', '#player-mealbar',
+      'ytm-consent-bump-v3-renderer', 'ytm-consent-bump-renderer', 'ytd-consent-bump-lightbox', '#consent-bump'
+    ];
+    function zap() {
+      try {
+        for (var i = 0; i < SEL.length; i++) {
+          var nodes = document.querySelectorAll(SEL[i]);
+          for (var j = 0; j < nodes.length; j++) {
+            var n = nodes[j];
+            if (n && n.parentNode) n.parentNode.removeChild(n);
+          }
+        }
+      } catch (e) {}
+    }
+    zap();
+    if (typeof MutationObserver !== 'undefined') {
+      try {
+        new MutationObserver(function () { zap(); })
+          .observe(document.documentElement, { childList: true, subtree: true });
+      } catch (e) {}
     }
   })();
 })();

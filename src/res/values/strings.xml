@@ -2,6 +2,8 @@
 <resources>
     <string name="app_name">YouTube VoT</string>
     <string name="title_sub">Закадровый перевод</string>
+    <string name="nav_back">Назад</string>
+    <string name="nav_forward">Вперёд</string>
     <string name="refresh">Обновить</string>
     <string name="exit">Выход</string>
     <string name="download_saved">Файл сохранён: %1$s</string>
