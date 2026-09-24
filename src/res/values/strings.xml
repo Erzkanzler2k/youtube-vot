@@ -1,11 +1,16 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">YouTube VoT</string>
+    <string name="brand_youtube">YouTube</string>
+    <string name="brand_vot">VoT</string>
     <string name="title_sub">Закадровый перевод</string>
     <string name="nav_back">Назад</string>
     <string name="nav_forward">Вперёд</string>
     <string name="refresh">Обновить</string>
     <string name="exit">Выход</string>
+    <string name="tab_home">Главная</string>
+    <string name="tab_shorts">Shorts</string>
+    <string name="tab_trending">Популярное</string>
     <string name="download_saved">Файл сохранён: %1$s</string>
     <string name="download_failed">Не удалось сохранить файл</string>
 </resources>

@@ -14,6 +14,7 @@ import android.content.Intent;
 import android.content.pm.ActivityInfo;
 import android.content.res.AssetManager;
 import android.graphics.Color;
+import android.graphics.PorterDuff;
 import android.net.Uri;
 import android.os.AsyncTask;
 import android.os.Build;
@@ -60,10 +61,23 @@ public class MainActivity extends Activity {
     private WebView web;
     private FrameLayout customViewContainer;
     private View topBar;
+    private View bottomBar;
     private View customView;
     private WebChromeClient.CustomViewCallback customViewCallback;
     private ProgressBar progressBar;
     private ImageView btnBack, btnForward;
+
+    // Нижняя навигация: Главная / Shorts / Популярное
+    private static final int[] TAB_ROOT_IDS = {R.id.tab_home, R.id.tab_shorts, R.id.tab_trending};
+    private static final int[] TAB_IND_IDS = {R.id.tab_home_ind, R.id.tab_shorts_ind, R.id.tab_trending_ind};
+    private static final int[] TAB_ICON_IDS = {R.id.tab_home_icon, R.id.tab_shorts_icon, R.id.tab_trending_icon};
+    private static final int[] TAB_LABEL_IDS = {R.id.tab_home_label, R.id.tab_shorts_label, R.id.tab_trending_label};
+    private static final String[] TAB_URLS = {
+            "https://m.youtube.com/",
+            "https://m.youtube.com/shorts",
+            "https://m.youtube.com/feed/trending"
+    };
+    private int activeTab = -1;
 
     @SuppressLint("SetJavaScriptEnabled")
     @Override
@@ -78,6 +92,7 @@ public class MainActivity extends Activity {
 
         customViewContainer = findViewById(R.id.custom_view_container);
         topBar = findViewById(R.id.top_bar);
+        bottomBar = findViewById(R.id.bottom_bar);
         web = findViewById(R.id.web);
         progressBar = findViewById(R.id.progress);
         btnBack = findViewById(R.id.btn_back);
@@ -97,6 +112,14 @@ public class MainActivity extends Activity {
         s.setMixedContentMode(WebSettings.MIXED_CONTENT_NEVER_ALLOW);
         s.setUserAgentString(USER_AGENT);
 
+        // Тёмная страница на весь экран (как в оригинальном приложении с тёмной темой)
+        if (Build.VERSION.SDK_INT >= 29) {
+            if (Build.VERSION.SDK_INT >= 33) {
+                s.setAlgorithmicDarkeningAllowed(true);
+            }
+            s.setForceDark(WebSettings.FORCE_DARK_ON);
+        }
+
         // Тёмный фон вместо белых вспышек при навигации; без цветного свечения краёв
         web.setBackgroundColor(0xFF0F0F0F);
         web.setOverScrollMode(View.OVER_SCROLL_NEVER);
@@ -111,12 +134,14 @@ public class MainActivity extends Activity {
             public void onPageStarted(WebView view, String url, android.graphics.Bitmap favicon) {
                 injectVot(view);
                 updateNavState();
+                updateActiveTab();
                 view.setAlpha(0f); // плавное появление вместо резкой смены кадра
             }
 
             @Override
             public void onPageFinished(WebView view, String url) {
                 updateNavState();
+                updateActiveTab();
                 view.animate().alpha(1f).setDuration(220).start();
             }
 
@@ -141,8 +166,25 @@ public class MainActivity extends Activity {
             @Override
             public void onProgressChanged(WebView view, int newProgress) {
                 if (progressBar != null) {
+                    progressBar.animate().cancel();
                     progressBar.setProgress(newProgress);
-                    progressBar.setVisibility(newProgress >= 100 ? View.GONE : View.VISIBLE);
+                    if (newProgress >= 100) {
+                        // Плавное исчезание при полной загрузке
+                        progressBar.animate().alpha(0f).setDuration(200).withEndAction(new Runnable() {
+                            @Override
+                            public void run() {
+                                if (progressBar.getProgress() >= 100) {
+                                    progressBar.setVisibility(View.GONE);
+                                }
+                                progressBar.setAlpha(1f);
+                            }
+                        });
+                    } else if (progressBar.getVisibility() != View.VISIBLE) {
+                        // Плавное появление при старте загрузки
+                        progressBar.setAlpha(0f);
+                        progressBar.setVisibility(View.VISIBLE);
+                        progressBar.animate().alpha(1f).setDuration(150).start();
+                    }
                 }
                 updateNavState();
             }
@@ -162,6 +204,7 @@ public class MainActivity extends Activity {
                                 ViewGroup.LayoutParams.MATCH_PARENT));
                 web.setVisibility(View.GONE);
                 if (topBar != null) topBar.setVisibility(View.GONE);
+                if (bottomBar != null) bottomBar.setVisibility(View.GONE);
                 setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE);
                 setImmersiveSystemUi();
             }
@@ -174,6 +217,7 @@ public class MainActivity extends Activity {
                 customViewContainer.setVisibility(View.GONE);
                 web.setVisibility(View.VISIBLE);
                 if (topBar != null) topBar.setVisibility(View.VISIBLE);
+                if (bottomBar != null) bottomBar.setVisibility(View.VISIBLE);
                 setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_PORTRAIT);
                 setNormalSystemUi();
                 if (customViewCallback != null) {
@@ -194,14 +238,14 @@ public class MainActivity extends Activity {
         btnBack.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
-                v.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY);
+                pressFeedback(v);
                 if (web.canGoBack()) web.goBack();
             }
         });
         btnForward.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
-                v.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY);
+                pressFeedback(v);
                 if (web.canGoForward()) web.goForward();
             }
         });
@@ -209,7 +253,7 @@ public class MainActivity extends Activity {
         refresh.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
-                v.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY);
+                pressFeedback(v);
                 web.reload();
             }
         });
@@ -217,10 +261,12 @@ public class MainActivity extends Activity {
         exit.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
-                v.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY);
+                pressFeedback(v);
                 finish();
             }
         });
+
+        setupTabs();
 
         String initial = HOME_URL;
         Uri data = getIntent().getData();
@@ -368,6 +414,58 @@ public class MainActivity extends Activity {
         btnBack.setAlpha(back ? 1f : 0.35f);
         btnForward.setEnabled(forward);
         btnForward.setAlpha(forward ? 1f : 0.35f);
+    }
+
+    /** Настройка вкладок нижней навигации. */
+    private void setupTabs() {
+        for (int i = 0; i < TAB_ROOT_IDS.length; i++) {
+            final int index = i;
+            View tab = findViewById(TAB_ROOT_IDS[i]);
+            tab.setOnClickListener(new View.OnClickListener() {
+                @Override
+                public void onClick(View v) {
+                    pressFeedback(v);
+                    web.loadUrl(TAB_URLS[index]);
+                }
+            });
+        }
+        setActiveTab(0);
+    }
+
+    /** Подсветка активной вкладки по текущему адресу страницы. */
+    private void updateActiveTab() {
+        String url = web.getUrl();
+        if (url == null) return;
+        int idx = -1;
+        if (url.startsWith("https://m.youtube.com/shorts")) idx = 1;
+        else if (url.startsWith("https://m.youtube.com/feed/trending")) idx = 2;
+        else if (url.startsWith("https://m.youtube.com/")) idx = 0;
+        if (idx >= 0) setActiveTab(idx);
+    }
+
+    private void setActiveTab(int index) {
+        if (index < 0 || index >= TAB_ROOT_IDS.length) return;
+        activeTab = index;
+        for (int i = 0; i < TAB_ROOT_IDS.length; i++) {
+            boolean active = i == index;
+            findViewById(TAB_IND_IDS[i]).setVisibility(active ? View.VISIBLE : View.GONE);
+            ((ImageView) findViewById(TAB_ICON_IDS[i]))
+                    .setColorFilter(active ? 0xFFFFFFFF : 0xFF9AA0A6, PorterDuff.Mode.SRC_IN);
+            ((TextView) findViewById(TAB_LABEL_IDS[i]))
+                    .setTextColor(active ? 0xFFFFFFFF : 0xFFB3B3B3);
+        }
+    }
+
+    /** Лёгкая вибрация + микро-пульс иконки при нажатии. */
+    private void pressFeedback(final View v) {
+        v.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY);
+        v.animate().scaleX(0.82f).scaleY(0.82f).setDuration(70)
+                .withEndAction(new Runnable() {
+                    @Override
+                    public void run() {
+                        v.animate().scaleX(1f).scaleY(1f).setDuration(130).start();
+                    }
+                });
     }
 
     @Override

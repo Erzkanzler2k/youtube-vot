@@ -5,7 +5,7 @@
     android:orientation="vertical"
     android:background="@color/background">
 
-    <!-- Верхняя панель (surface, 8pt-сетка) -->
+    <!-- Верхняя панель: бренд + навигация -->
     <LinearLayout
         android:id="@+id/top_bar"
         android:layout_width="match_parent"
@@ -13,17 +13,34 @@
         android:orientation="horizontal"
         android:gravity="center_vertical"
         android:background="@color/surface"
-        android:paddingStart="14dp"
+        android:paddingStart="10dp"
         android:paddingEnd="8dp"
-        android:paddingTop="6dp"
-        android:paddingBottom="6dp">
+        android:paddingTop="2dp"
+        android:paddingBottom="2dp">
+
+        <ImageView
+            android:id="@+id/logo"
+            android:layout_width="24dp"
+            android:layout_height="24dp"
+            android:layout_marginEnd="8dp"
+            android:src="@drawable/ic_brand_logo"
+            android:importantForAccessibility="no" />
 
         <TextView
             android:id="@+id/title"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text="@string/app_name"
+            android:text="@string/brand_youtube"
             android:textColor="@color/text_primary"
+            android:textSize="17sp"
+            android:textStyle="bold"
+            android:layout_marginEnd="3dp" />
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="@string/brand_vot"
+            android:textColor="@color/accent"
             android:textSize="17sp"
             android:textStyle="bold" />
 
@@ -102,6 +119,135 @@
         android:layout_height="0dp"
         android:layout_weight="1"
         android:background="@color/background" />
+
+    <!-- Разделитель над нижней навигацией -->
+    <View
+        android:layout_width="match_parent"
+        android:layout_height="1dp"
+        android:background="@color/divider" />
+
+    <!-- Нижняя навигация: Главная / Shorts / Популярное -->
+    <LinearLayout
+        android:id="@+id/bottom_bar"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:background="@color/surface">
+
+        <LinearLayout
+            android:id="@+id/tab_home"
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_weight="1"
+            android:orientation="vertical"
+            android:gravity="center_horizontal"
+            android:clickable="true"
+            android:focusable="true"
+            android:background="?android:attr/selectableItemBackground"
+            android:contentDescription="@string/tab_home"
+            android:paddingTop="4dp">
+
+            <View
+                android:id="@+id/tab_home_ind"
+                android:layout_width="34dp"
+                android:layout_height="3dp"
+                android:background="@drawable/tab_indicator"
+                android:visibility="gone" />
+
+            <ImageView
+                android:id="@+id/tab_home_icon"
+                android:layout_width="24dp"
+                android:layout_height="24dp"
+                android:layout_marginTop="3dp"
+                android:src="@drawable/ic_tab_home"
+                android:importantForAccessibility="no" />
+
+            <TextView
+                android:id="@+id/tab_home_label"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="@string/tab_home"
+                android:textSize="10sp"
+                android:textColor="@color/text_secondary"
+                android:importantForAccessibility="no" />
+        </LinearLayout>
+
+        <LinearLayout
+            android:id="@+id/tab_shorts"
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_weight="1"
+            android:orientation="vertical"
+            android:gravity="center_horizontal"
+            android:clickable="true"
+            android:focusable="true"
+            android:background="?android:attr/selectableItemBackground"
+            android:contentDescription="@string/tab_shorts"
+            android:paddingTop="4dp">
+
+            <View
+                android:id="@+id/tab_shorts_ind"
+                android:layout_width="34dp"
+                android:layout_height="3dp"
+                android:background="@drawable/tab_indicator"
+                android:visibility="gone" />
+
+            <ImageView
+                android:id="@+id/tab_shorts_icon"
+                android:layout_width="24dp"
+                android:layout_height="24dp"
+                android:layout_marginTop="3dp"
+                android:src="@drawable/ic_tab_shorts"
+                android:importantForAccessibility="no" />
+
+            <TextView
+                android:id="@+id/tab_shorts_label"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="@string/tab_shorts"
+                android:textSize="10sp"
+                android:textColor="@color/text_secondary"
+                android:importantForAccessibility="no" />
+        </LinearLayout>
+
+        <LinearLayout
+            android:id="@+id/tab_trending"
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_weight="1"
+            android:orientation="vertical"
+            android:gravity="center_horizontal"
+            android:clickable="true"
+            android:focusable="true"
+            android:background="?android:attr/selectableItemBackground"
+            android:contentDescription="@string/tab_trending"
+            android:paddingTop="4dp">
+
+            <View
+                android:id="@+id/tab_trending_ind"
+                android:layout_width="34dp"
+                android:layout_height="3dp"
+                android:background="@drawable/tab_indicator"
+                android:visibility="gone" />
+
+            <ImageView
+                android:id="@+id/tab_trending_icon"
+                android:layout_width="24dp"
+                android:layout_height="24dp"
+                android:layout_marginTop="3dp"
+                android:src="@drawable/ic_tab_trending"
+                android:importantForAccessibility="no" />
+
+            <TextView
+                android:id="@+id/tab_trending_label"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="@string/tab_trending"
+                android:textSize="10sp"
+                android:textColor="@color/text_secondary"
+                android:importantForAccessibility="no" />
+        </LinearLayout>
+    </LinearLayout>
 
     <!-- Контейнер для полноэкранного видео -->
     <FrameLayout
