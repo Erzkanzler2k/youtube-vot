@@ -9,8 +9,6 @@
 #include "params.h"
 #include "proxy.h"
 
-extern int NOT_EXIT;
-
 JNIEXPORT jint JNICALL
 Java_com_vot_youtube_ByeDpiNative_createSocketWithCommandLine(JNIEnv *env, jobject thiz,
                                                                jobjectArray args) {
@@ -26,7 +24,7 @@ Java_com_vot_youtube_ByeDpiNative_createSocketWithCommandLine(JNIEnv *env, jobje
     }
     int result = parse_args((int)argc, argv);
     if (result < 0) return -1;
-    int fd = listen_socket((struct sockaddr_ina *)&params.laddr);
+    int fd = listen_socket((const union sockaddr_u *)&params.laddr);
     return fd;
 }
 
@@ -34,8 +32,7 @@ JNIEXPORT jint JNICALL
 Java_com_vot_youtube_ByeDpiNative_startProxy(JNIEnv *env, jobject thiz, jint fd) {
     (void)env;
     (void)thiz;
-    NOT_EXIT = 1;
-    if (event_loop((int)fd) < 0) return get_e();
+    if (start_event_loop((int)fd) < 0) return get_e();
     return 0;
 }
 
