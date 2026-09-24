@@ -26,12 +26,18 @@ import android.util.Log;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.IOException;
+import java.io.InputStream;
+import java.io.OutputStream;
 import java.net.DatagramPacket;
 import java.net.DatagramSocket;
 import java.net.InetAddress;
+import java.net.SocketTimeoutException;
+import java.net.URL;
 import java.util.HashMap;
 import java.util.Iterator;
 import java.util.Map;
+
+import javax.net.ssl.HttpsURLConnection;
 
 public final class BypassEngine {
     private static final String TAG = "YouTubeVotBypass";
@@ -49,6 +55,11 @@ public final class BypassEngine {
     private static final long FLOW_IDLE_MS = 120_000L;
     private static final long DNS_IDLE_MS = 60_000L;
     private static final long SWEEP_INTERVAL_MS = 30_000L;
+
+    // DNS: переход UDP -> DoH (фолбэк если DPI отравил/съел ответ)
+    private static final long DNS_DOH_TIMEOUT_MS = 2000L;
+    private static final int DNS_UDP_POLL_MS = 1000;          // таймаут UDP receive
+    private static final String DOH_URL = "https://dns.yandex.ru/dns-query";
 
     /** true, когда движок реально перехватывает и пересылает трафик. */
     public static boolean isAvailable() {
@@ -286,6 +297,9 @@ public final class BypassEngine {
         private volatile boolean running = true;
         private long lastActive = System.currentTimeMillis();
         private Thread thread;
+        private byte[] pendingQuery;  // последний DNS-запрос этого клиента
+        private long pendingDeadline; // когда переходить на DoH
+        private boolean dohSent;      // DoH уже запущен для этого запроса
 
         DnsRelay(BypassEngine engine, VpnService vpn, int cliIp, int cliPort, int dnsIp) {
             this.engine = engine;
@@ -297,6 +311,7 @@ public final class BypassEngine {
             try {
                 s = new DatagramSocket();
                 vpn.protect(s);
+                s.setSoTimeout(DNS_UDP_POLL_MS);
             } catch (IOException e) {
                 Log.i(TAG, "dns relay socket failed");
             }
@@ -312,9 +327,13 @@ public final class BypassEngine {
 
         void onQuery(byte[] buf, int off, int len) {
             lastActive = System.currentTimeMillis();
-            if (!running || !usable) return;
+            if (!running) return;
             byte[] q = new byte[len];
             System.arraycopy(buf, off, q, 0, len);
+            pendingQuery = q;
+            pendingDeadline = System.currentTimeMillis() + DNS_DOH_TIMEOUT_MS;
+            dohSent = false;
+            if (!usable) return; // сокета нет — остаётся только DoH-фолбэк
             try {
                 DatagramPacket dp = new DatagramPacket(q, len,
                         InetAddress.getByName(BypassProto.ipToString(dnsIp)), 53);
@@ -326,20 +345,95 @@ public final class BypassEngine {
         @Override
         public void run() {
             byte[] rbuf = new byte[4096];
-            while (running && usable) {
+            while (running) {
+                if (!usable) {
+                    // UDP-сокет не создался — крутимся по таймауту, отвечает DoH
+                    try {
+                        Thread.sleep(DNS_UDP_POLL_MS);
+                    } catch (InterruptedException e) {
+                        break;
+                    }
+                    maybeDoh();
+                    continue;
+                }
                 try {
                     DatagramPacket rp = new DatagramPacket(rbuf, rbuf.length);
-                    sock.receive(rp);
+                    sock.receive(rp); // с soTimeout — каждую секунду сверяем дедлайн
                     lastActive = System.currentTimeMillis();
-                    int rl = rp.getLength();
-                    byte[] pkt = new byte[28 + rl];
-                    int total = BypassProto.buildUdpPacket(pkt, dnsIp, cliIp, 53, cliPort,
-                            rp.getData(), rp.getOffset(), rl);
-                    engine.writeTun(pkt, total);
+                    sendUdpResponse(rp.getData(), rp.getOffset(), rp.getLength());
+                    pendingQuery = null;
+                } catch (SocketTimeoutException te) {
+                    maybeDoh();
                 } catch (IOException e) {
                     if (running) break;
                 }
             }
+        }
+
+        /** Если UDP-ответ так и не пришёл — один раз запускаем DoH-запрос. */
+        private void maybeDoh() {
+            byte[] q = pendingQuery;
+            if (q == null || dohSent) return;
+            if (System.currentTimeMillis() < pendingDeadline) return;
+            dohSent = true;
+            pendingQuery = null;
+            dohQuery(q);
+        }
+
+        private void sendUdpResponse(byte[] data, int off, int len) {
+            if (len <= 0 || len > 4096) return;
+            byte[] pkt = new byte[28 + len];
+            int total = BypassProto.buildUdpPacket(pkt, dnsIp, cliIp, 53, cliPort,
+                    data, off, len);
+            engine.writeTun(pkt, total);
+        }
+
+        /**
+         * DNS-over-HTTPS фолбэк (аналог nfqsd в zapret): запрос уходит открытым
+         * текстом по 443 на dns.yandex.ru (внутри нашего же VPN), DPI его не
+         * читает. Ответ собираем в UDP-пакет и отдаём клиенту в TUN.
+         */
+        private void dohQuery(final byte[] q) {
+            Thread t = new Thread(new Runnable() {
+                @Override
+                public void run() {
+                    HttpsURLConnection c = null;
+                    try {
+                        c = (HttpsURLConnection) new URL(DOH_URL).openConnection();
+                        c.setConnectTimeout(4000);
+                        c.setReadTimeout(5000);
+                        c.setRequestMethod("POST");
+                        c.setRequestProperty("Content-Type", "application/dns-message");
+                        c.setRequestProperty("Accept", "application/dns-message");
+                        c.setDoOutput(true);
+                        OutputStream os = c.getOutputStream();
+                        os.write(q);
+                        os.flush();
+                        int code = c.getResponseCode();
+                        if (code == 200) {
+                            byte[] resp = readAll(c.getInputStream(), 4096);
+                            if (resp.length > 0) sendUdpResponse(resp, 0, resp.length);
+                        }
+                    } catch (Exception ignored) {
+                    } finally {
+                        if (c != null) c.disconnect();
+                    }
+                }
+            }, "bypass-doh");
+            t.setDaemon(true);
+            t.start();
+        }
+
+        private static byte[] readAll(InputStream is, int cap) throws IOException {
+            byte[] tmp = new byte[cap];
+            int pos = 0;
+            int n;
+            while (pos < cap && (n = is.read(tmp, pos, cap - pos)) > 0) {
+                pos += n;
+            }
+            byte[] out = new byte[pos];
+            System.arraycopy(tmp, 0, out, 0, pos);
+            return out;
         }
 
         boolean isIdle(long now, long maxIdleMs) {
