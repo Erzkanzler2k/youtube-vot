@@ -30,6 +30,7 @@ import android.graphics.PorterDuff;
 import android.net.ConnectivityManager;
 import android.net.Network;
 import android.net.Uri;
+import android.net.VpnService;
 import android.os.AsyncTask;
 import android.os.Build;
 import android.os.Bundle;
@@ -105,6 +106,7 @@ public class MainActivity extends Activity {
     private static final String PREF_LAST_ATTEMPT = "last_update_attempt";
     private static final long UPDATE_CHECK_INTERVAL = 60 * 60 * 1000L;  // авто-проверка не чаще 1 раза в час
     private static final long UPDATE_RETRY_INTERVAL = 10 * 60 * 1000L;  // повтор при сбое не чаще 1 раза в 10 минут
+    private static final int REQ_VPN_PERMISSION = 7001;                 // разрешение системного VPN (ветка bypass)
 
     private WebView web;
     private FrameLayout customViewContainer;
@@ -722,6 +724,35 @@ public class MainActivity extends Activity {
         });
         content.addView(rowCheck);
 
+        // Обход блокировок РКН (VPN) — ветка bypass
+        LinearLayout rowBypass = settingsRow(R.drawable.ic_settings,
+                getString(R.string.settings_bypass),
+                getString(R.string.settings_bypass_desc));
+        rowBypass.setClickable(false);
+        rowBypass.setFocusable(false);
+        final SharedPreferences bypassPrefs =
+                getSharedPreferences(BypassVpnService.PREFS_BYPASS, MODE_PRIVATE);
+        Switch swBypass = new Switch(this);
+        swBypass.setChecked(bypassPrefs.getBoolean(BypassVpnService.PREF_ENABLED, false));
+        swBypass.setOnCheckedChangeListener(new CompoundButton.OnCheckedChangeListener() {
+            @Override
+            public void onCheckedChanged(CompoundButton b, boolean checked) {
+                if (checked) {
+                    enableBypass();
+                } else {
+                    Intent stop = new Intent(MainActivity.this, BypassVpnService.class)
+                            .setAction(BypassVpnService.ACTION_STOP);
+                    stopService(stop);
+                    bypassPrefs.edit().putBoolean(BypassVpnService.PREF_ENABLED, false).apply();
+                }
+            }
+        });
+        LinearLayout.LayoutParams swBypassLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        swBypassLp.setMarginStart(dp(16));
+        rowBypass.addView(swBypass, swBypassLp);
+        content.addView(rowBypass);
+
         // Сервер перевода
         String worker = prefs.getString(PREF_WORKER_URL, "");
         String workerSub = worker.isEmpty() ? getString(R.string.settings_default_worker) : worker;
@@ -757,6 +788,53 @@ public class MainActivity extends Activity {
                 .create();
         holder[0] = dialog;
         dialog.show();
+    }
+
+    /* ---------------- Обход блокировок (VPN, ветка bypass) ---------------- */
+
+    private void enableBypass() {
+        if (!BypassVpnService.isReady()) {
+            Toast.makeText(this, R.string.bypass_not_ready, Toast.LENGTH_LONG).show();
+            getSharedPreferences(BypassVpnService.PREFS_BYPASS, MODE_PRIVATE)
+                    .edit().putBoolean(BypassVpnService.PREF_ENABLED, false).apply();
+            return;
+        }
+        // Системный диалог разрешения VPN (VpnService.prepare). Если уже есть
+        // чужой активный VPN — Android предложит его отключить.
+        Intent prepare = VpnService.prepare(this);
+        if (prepare != null) {
+            try {
+                startActivityForResult(prepare, REQ_VPN_PERMISSION);
+            } catch (ActivityNotFoundException e) {
+                Toast.makeText(this, R.string.bypass_not_ready, Toast.LENGTH_LONG).show();
+            }
+        } else {
+            startBypassService();
+        }
+    }
+
+    private void startBypassService() {
+        Intent i = new Intent(this, BypassVpnService.class)
+                .setAction(BypassVpnService.ACTION_START);
+        if (Build.VERSION.SDK_INT >= 26) {
+            startForegroundService(i); // сервис сразу вызывает startForeground
+        } else {
+            startService(i);
+        }
+    }
+
+    @Override
+    protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        super.onActivityResult(requestCode, resultCode, data);
+        if (requestCode == REQ_VPN_PERMISSION && resultCode == RESULT_OK) {
+            // Первый prepare() мог только снять чужой VPN — проверяем ещё раз и стартуем.
+            if (VpnService.prepare(this) == null) {
+                startBypassService();
+            } else {
+                getSharedPreferences(BypassVpnService.PREFS_BYPASS, MODE_PRIVATE)
+                        .edit().putBoolean(BypassVpnService.PREF_ENABLED, false).apply();
+            }
+        }
     }
 
     /** Строка диалога настроек: иконка + заголовок + подпись. */
