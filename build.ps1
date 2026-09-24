@@ -85,40 +85,20 @@ $classFiles = Get-ChildItem -Recurse $classesDir -Filter *.class | ForEach-Objec
 & "$bt\d8.bat" --release --lib (Join-Path $plat "android.jar") --output $dexDir @classFiles
 if ($LASTEXITCODE -ne 0) { throw "d8 failed" }
 
-# --- 5. Pack classes.dex into APK -------------------------------------------
-Write-Host "[5/7] pack classes.dex into APK..." -ForegroundColor Cyan
+# --- 5. Pack classes.dex + normalize entry names (ZipFix, Java) -------------
+#   aapt2 на Windows пишет ассеты как "assets/vot\bootstrap.js"; Android
+#   может отклонить APK с такими именами при установке. ZipFix переписывает
+#   все entry с '/' и дописывает classes.dex стандартным способом.
+Write-Host "[5/7] pack classes.dex + normalize zip names..." -ForegroundColor Cyan
 $unsigned = Join-Path $build "app-unsigned.apk"
-Copy-Item (Join-Path $build "base.apk") $unsigned -Force
-Add-Type -AssemblyName System.IO.Compression.FileSystem
-$zip = [System.IO.Compression.ZipFile]::Open($unsigned, 'Update')
-if (-not ($zip.Entries | Where-Object { $_.FullName -eq 'classes.dex' })) {
-    $entry = $zip.CreateEntry("classes.dex", [System.IO.Compression.CompressionLevel]::Optimal)
-    $stream = $entry.Open()
-    $bytes = [System.IO.File]::ReadAllBytes((Join-Path $dexDir "classes.dex"))
-    $stream.Write($bytes, 0, $bytes.Length)
-    $stream.Dispose()
+$zipfixClass = Join-Path $build "ZipFix.class"
+if (-not (Test-Path $zipfixClass)) {
+    & $javac -encoding UTF-8 -nowarn -d $build (Join-Path $root "tools\ZipFix.java")
+    if ($LASTEXITCODE -ne 0) { throw "ZipFix compile failed" }
 }
-$zip.Dispose()
-
-# --- 5b. Normalize zip entry names: Windows aapt2 stores assets as "assets/vot\bootstrap.js".
-#        Android AssetManager expects "/" separators, otherwise readAsset() fails. ------------
-$normalized = Join-Path $build "app-norm.apk"
-$srcZip = [System.IO.Compression.ZipFile]::OpenRead($unsigned)
-$dstZip = [System.IO.Compression.ZipFile]::Open($normalized, 'Create')
-try {
-    foreach ($entry in $srcZip.Entries) {
-        $name = $entry.FullName.Replace('\', '/')
-        $newEntry = $dstZip.CreateEntry($name, [System.IO.Compression.CompressionLevel]::NoCompression)
-        $inStream = $entry.Open()
-        $outStream = $newEntry.Open()
-        try { $inStream.CopyTo($outStream) } finally { $outStream.Dispose(); $inStream.Dispose() }
-    }
-} finally {
-    $dstZip.Dispose()
-    $srcZip.Dispose()
-}
-Copy-Item $normalized $unsigned -Force
-Remove-Item $normalized -Force
+$java = Join-Path $jdkBin "java.exe"
+& $java -cp $build ZipFix (Join-Path $build "base.apk") (Join-Path $dexDir "classes.dex") $unsigned
+if ($LASTEXITCODE -ne 0) { throw "ZipFix failed" }
 
 # --- 6. Align ---------------------------------------------------------------
 Write-Host "[6/7] zipalign..." -ForegroundColor Cyan
@@ -127,20 +107,26 @@ $aligned = Join-Path $build "aligned.apk"
 if ($LASTEXITCODE -ne 0) { throw "zipalign failed" }
 
 # --- 7. Sign -----------------------------------------------------------------
-Write-Host "[7/7] apksigner (debug key)..." -ForegroundColor Cyan
+Write-Host "[7/7] apksigner (debug key, v1+v2+v3)..." -ForegroundColor Cyan
 $ks  = Join-Path $root "debug.keystore"
 $final = Join-Path $out "YouTubeVot.apk"
 if (-not (Test-Path $ks)) {
     & keytool -genkeypair -v -keystore $ks -alias vot -keyalg RSA -keysize 2048 -validity 10950 `
         -storepass android -keypass android -dname "CN=YouTubeVot,O=VoT,C=RU" | Out-Null
 }
-& "$bt\apksigner.bat" sign --ks $ks --ks-pass pass:android --key-pass pass:android --out $final $aligned
+& "$bt\apksigner.bat" sign --ks $ks --ks-pass pass:android --key-pass pass:android `
+    --v1-signing-enabled true --v2-signing-enabled true --v3-signing-enabled true `
+    --out $final $aligned
 if ($LASTEXITCODE -ne 0) { throw "apksigner sign failed" }
 
 # --- Verify ------------------------------------------------------------------
 Write-Host "Verifying signature..." -ForegroundColor Cyan
 & "$bt\apksigner.bat" verify --verbose $final
 if ($LASTEXITCODE -ne 0) { throw "apksigner verify failed" }
+
+Write-Host "Verifying alignment..." -ForegroundColor Cyan
+& "$bt\zipalign.exe" -c 4 $final
+if ($LASTEXITCODE -ne 0) { throw "zipalign verify failed" }
 
 $size = [math]::Round((Get-Item $final).Length / 1MB, 2)
 Write-Host ""
