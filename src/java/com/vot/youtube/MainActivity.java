@@ -118,6 +118,8 @@ public class MainActivity extends Activity {
     /** Действие, которым манифестный receiver будит Activity на завершение загрузки. */
     static final String ACTION_HANDLE_DOWNLOAD = "com.vot.youtube.HANDLE_DOWNLOAD";
     static final String EXTRA_DOWNLOAD_ID = "download_id";
+    /** Тег логов обновления, доступный receiver'у. */
+    static final String TAG_UPD_PUBLIC = TAG_UPD;
     private static final String PREF_AUTO_UPDATE = "auto_update";
     private static final String PREF_WORKER_URL = "worker_url";
     // Метки времени последней успешной проверки и последней попытки (для ретраев без спама API)
@@ -141,6 +143,8 @@ public class MainActivity extends Activity {
     private ConnectivityManager.NetworkCallback netCallback;
     private boolean updateCheckRunning;
     private long currentDownloadId = -1L;
+    /** id загрузки, для которого уже запущена обработка (защита от повтора). */
+    private long handledDownloadId = -1L;
     private File downloadedApkFile;
     private DownloadManager downloadManager;
     private BroadcastReceiver downloadReceiver;
@@ -1440,6 +1444,11 @@ public class MainActivity extends Activity {
     }
 
     private void handleDownloadComplete(long id) {
+        // Защита от двойного срабатывания: на API 26+ событие приходит и
+        // манифестному receiver'у (он будит Activity), и динамическому — оба
+        // могут вызвать обработку для одного id.
+        if (handledDownloadId == id) return;
+        handledDownloadId = id;
         DownloadManager dm = (DownloadManager) getSystemService(DOWNLOAD_SERVICE);
         if (dm == null) return;
         Cursor c = null;

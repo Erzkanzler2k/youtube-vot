@@ -4,7 +4,9 @@ import android.app.DownloadManager;
 import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
+import android.util.Log;
 import android.content.SharedPreferences;
+import android.net.Uri;
 
 /**
  * Приёмник завершения загрузки APK через DownloadManager.
@@ -30,12 +32,18 @@ public class UpdateDownloadReceiver extends BroadcastReceiver {
         if (id < 0) return;
 
         // Реагируем только на собственную загрузку: чужие загрузки в системе
-        // тоже шлют этот броадкаст.
+        // тоже шлют этот броадкаст. Плюс проверяем, что в extras действительно
+        // URI от DownloadManager — receiver экспортирован, так что фильтруем
+        // и по источнику данных.
+        Uri data = intent.getData();
+        if (data != null && !"content".equals(data.getScheme())) return;
+
         SharedPreferences prefs = context.getSharedPreferences(
                 BypassVpnService.PREFS_BYPASS, Context.MODE_PRIVATE);
         long expected = prefs.getLong(MainActivity.PREF_DOWNLOAD_ID, -1L);
         if (expected != id) return;
         prefs.edit().putLong(MainActivity.PREF_DOWNLOAD_ID, -1L).apply();
+        Log.i(MainActivity.TAG_UPD_PUBLIC, "download receiver: id=" + id + " (продолжаем установку)");
 
         Intent next = new Intent(context, MainActivity.class)
                 .setAction(MainActivity.ACTION_HANDLE_DOWNLOAD)
