@@ -37,6 +37,7 @@ import android.os.Bundle;
 import android.os.Environment;
 import android.provider.MediaStore;
 import android.provider.Settings;
+import android.util.Log;
 import android.view.DisplayCutout;
 import android.view.Gravity;
 import android.view.HapticFeedbackConstants;
@@ -94,8 +95,18 @@ public class MainActivity extends Activity {
             "https://github.com/Erzkanzler2k/youtube-vot/releases/latest";
     private static final String JSDELIVR_MANIFEST =
             "https://cdn.jsdelivr.net/gh/Erzkanzler2k/youtube-vot@latest/release-manifest.json";
+    // Свежий API резолва @latest (в отличие от CDN-кэша @latest, который может
+    // держать старый контент до ~12 ч после релиза) — для точной пин-версии.
+    private static final String JSDELIVR_RESOLVED =
+            "https://data.jsdelivr.com/v1/packages/gh/Erzkanzler2k/youtube-vot/resolved";
     private static final String RELEASE_TAG_MARKER = "/releases/tag/";
     private static final String APK_ASSET_NAME = "YouTubeVot.apk";
+    private static final String TAG_UPD = "YouTubeVotUpdate";
+    // Скачивание APK всегда пересобираем на CDN-зеркало по тегу: github.com
+    // в РФ заблокирован, а файл коммитится в репозиторий на каждый релиз.
+    // ФОРМАТ: String.format(JSDELIVR_DOWNLOAD_TEMPLATE, tag)
+    private static final String JSDELIVR_DOWNLOAD_TEMPLATE =
+            "https://cdn.jsdelivr.net/gh/Erzkanzler2k/youtube-vot@%s/out/YouTubeVot.apk";
     private static final String PREF_SKIP_UPDATE = "skip_update_version";
     private static final String PREF_PENDING_URL = "pending_update_url";
     private static final String PREF_PENDING_TAG = "pending_update_tag";
@@ -742,7 +753,11 @@ public class MainActivity extends Activity {
                 } else {
                     Intent stop = new Intent(MainActivity.this, BypassVpnService.class)
                             .setAction(BypassVpnService.ACTION_STOP);
-                    stopService(stop);
+                    // startService, а не stopService: у stopService в состоянии
+                    // «fg-сервис с startRequested=false» (после системного рестарта)
+                    // вызов является no-op, и VPN не снимается. ACTION_STOP через
+                    // startService гарантированно доставляется в onStartCommand.
+                    startService(stop);
                     bypassPrefs.edit().putBoolean(BypassVpnService.PREF_ENABLED, false).apply();
                 }
             }
@@ -1055,24 +1070,77 @@ public class MainActivity extends Activity {
 
         @Override
         protected String[] doInBackground(Void... ignore) {
-            // 1) GitHub API — канон, работает вне блокировок
-            String[] res = fetchGithubApi();
+            // 1) CDN-зеркало jsDelivr — работает и при блокировке GitHub (РФ):
+            //    манифест из тега репозитория, @latest = новейший тег релиза.
+            //    Ставим первым: для целевой аудитории это самый быстрый и
+            //    надёжный источник.
+            String[] res = fetchJsDelivr();
             if (res != null) return res;
-            // 2) HTML-страница релиза — тег берём из редиректа, читаем только заголовки
-            res = fetchGithubHtml();
+            // 2) GitHub API — канон, доступен вне блокировок
+            res = fetchGithubApi();
             if (res != null) return res;
-            // 3) CDN-зеркало jsDelivr — манифест из тега репозитория, обходит блокировку GitHub
-            return fetchJsDelivr();
+            // 3) HTML-страница релиза — тег берём из редиректа, читаем только заголовки
+            return fetchGithubHtml();
         }
 
-        /** Источник 1: api.github.com/repos/.../releases/latest */
+        /** Источник 1: jsDelivr. Сначала резолвим ТОЧНУЮ последнюю версию через
+         *  data.jsdelivr.com (этот API свежий; CDN-кэш @latest может держать
+         *  старый контент до ~12 ч после релиза), затем читаем манифест по
+         *  пин-версии. Не зависит от доступности GitHub. */
+        private String[] fetchJsDelivr() {
+            HttpURLConnection conn = null;
+            InputStream in = null;
+            long t0 = System.currentTimeMillis();
+            String version = null;
+            try {
+                conn = openConn(new URL(JSDELIVR_RESOLVED), 8000);
+                if (conn.getResponseCode() == HttpURLConnection.HTTP_OK) {
+                    in = conn.getInputStream();
+                    JSONObject root = new JSONObject(readAll(in));
+                    version = root.optString("version", "");
+                }
+            } catch (Exception ignored) {
+            } finally {
+                closeQuietly(in, conn);
+                in = null;
+                conn = null;
+            }
+            String manifestUrl = (version != null && !version.isEmpty())
+                    ? "https://cdn.jsdelivr.net/gh/Erzkanzler2k/youtube-vot@" + version + "/release-manifest.json"
+                    : JSDELIVR_MANIFEST; // запасной вариант: @latest
+            try {
+                conn = openConn(new URL(manifestUrl), 8000);
+                if (conn.getResponseCode() != HttpURLConnection.HTTP_OK) {
+                    Log.i(TAG_UPD, "jsdelivr: HTTP " + conn.getResponseCode() + " (" + (System.currentTimeMillis() - t0) + "ms)");
+                    return null;
+                }
+                in = conn.getInputStream();
+                JSONObject root = new JSONObject(readAll(in));
+                String tag = root.optString("tag", "");
+                String apk = root.optString("apk", "");
+                if (tag.isEmpty() || apk.isEmpty()) return null;
+                succeeded = true;
+                Log.i(TAG_UPD, "jsdelivr: tag=" + tag + " (v=" + version + ") (" + (System.currentTimeMillis() - t0) + "ms)");
+                return new String[]{tag, apk};
+            } catch (Exception e) {
+                return null;
+            } finally {
+                closeQuietly(in, conn);
+            }
+        }
+
+        /** Источник 2: api.github.com/repos/.../releases/latest */
         private String[] fetchGithubApi() {
             HttpURLConnection conn = null;
             InputStream in = null;
+            long t0 = System.currentTimeMillis();
             try {
-                conn = openConn(new URL(GITHUB_LATEST_API));
+                conn = openConn(new URL(GITHUB_LATEST_API), 7000);
                 conn.setRequestProperty("Accept", "application/vnd.github+json");
-                if (conn.getResponseCode() != HttpURLConnection.HTTP_OK) return null;
+                if (conn.getResponseCode() != HttpURLConnection.HTTP_OK) {
+                    Log.i(TAG_UPD, "github api: HTTP " + conn.getResponseCode() + " (" + (System.currentTimeMillis() - t0) + "ms)");
+                    return null;
+                }
                 succeeded = true;
                 in = conn.getInputStream();
                 JSONObject root = new JSONObject(readAll(in));
@@ -1083,8 +1151,10 @@ public class MainActivity extends Activity {
                 for (int i = 0; i < assets.length(); i++) {
                     JSONObject asset = assets.getJSONObject(i);
                     if (APK_ASSET_NAME.equals(asset.optString("name", ""))) {
-                        String downloadUrl = asset.optString("browser_download_url", "");
-                        if (!downloadUrl.isEmpty()) return new String[]{tag, downloadUrl};
+                        // GitHub отдаёт github.com URL, а он в РФ заблокирован —
+                        // пересобираем скачивание на CDN-зеркало по тегу.
+                        Log.i(TAG_UPD, "github api: tag=" + tag + " (" + (System.currentTimeMillis() - t0) + "ms)");
+                        return new String[]{tag, String.format(JSDELIVR_DOWNLOAD_TEMPLATE, tag)};
                     }
                 }
                 return null;
@@ -1095,14 +1165,18 @@ public class MainActivity extends Activity {
             }
         }
 
-        /** Источник 2: github.com/.../releases/latest — редирект на /releases/tag/<версия>. */
+        /** Источник 3: github.com/.../releases/latest — редирект на /releases/tag/<версия>. */
         private String[] fetchGithubHtml() {
             HttpURLConnection conn = null;
+            long t0 = System.currentTimeMillis();
             try {
-                conn = openConn(new URL(GITHUB_LATEST_HTML));
+                conn = openConn(new URL(GITHUB_LATEST_HTML), 7000);
                 conn.setInstanceFollowRedirects(false);
                 int code = conn.getResponseCode();
-                if (code != 301 && code != 302 && code != 303 && code != 307 && code != 308) return null;
+                if (code != 301 && code != 302 && code != 303 && code != 307 && code != 308) {
+                    Log.i(TAG_UPD, "github html: HTTP " + code + " (" + (System.currentTimeMillis() - t0) + "ms)");
+                    return null;
+                }
                 String loc = conn.getHeaderField("Location");
                 if (loc == null) return null;
                 int idx = loc.indexOf(RELEASE_TAG_MARKER);
@@ -1114,9 +1188,9 @@ public class MainActivity extends Activity {
                 if (h >= 0) tag = tag.substring(0, h);
                 if (tag.isEmpty() || tag.contains(" ")) return null;
                 succeeded = true;
-                return new String[]{tag,
-                        "https://github.com/Erzkanzler2k/youtube-vot/releases/download/"
-                                + tag + "/" + APK_ASSET_NAME};
+                Log.i(TAG_UPD, "github html: tag=" + tag + " (" + (System.currentTimeMillis() - t0) + "ms)");
+                // Скачивание — с CDN-зеркала (github.com в РФ заблокирован)
+                return new String[]{tag, String.format(JSDELIVR_DOWNLOAD_TEMPLATE, tag)};
             } catch (Exception e) {
                 return null;
             } finally {
@@ -1124,31 +1198,14 @@ public class MainActivity extends Activity {
             }
         }
 
-        /** Источник 3: cdn.jsdelivr.net — манифест релиза (@latest), не зависит от доступности GitHub. */
-        private String[] fetchJsDelivr() {
-            HttpURLConnection conn = null;
-            InputStream in = null;
-            try {
-                conn = openConn(new URL(JSDELIVR_MANIFEST));
-                if (conn.getResponseCode() != HttpURLConnection.HTTP_OK) return null;
-                in = conn.getInputStream();
-                JSONObject root = new JSONObject(readAll(in));
-                succeeded = true;
-                String tag = root.optString("tag", "");
-                String apk = root.optString("apk", "");
-                if (tag.isEmpty() || apk.isEmpty()) return null;
-                return new String[]{tag, apk};
-            } catch (Exception e) {
-                return null;
-            } finally {
-                closeQuietly(in, conn);
-            }
+        private HttpURLConnection openConn(URL url) throws IOException {
+            return openConn(url, 15000);
         }
 
-        private HttpURLConnection openConn(URL url) throws IOException {
+        private HttpURLConnection openConn(URL url, int timeoutMs) throws IOException {
             HttpURLConnection conn = (HttpURLConnection) url.openConnection();
-            conn.setConnectTimeout(15000);
-            conn.setReadTimeout(15000);
+            conn.setConnectTimeout(timeoutMs);
+            conn.setReadTimeout(timeoutMs);
             conn.setRequestProperty("User-Agent", "YouTubeVot");
             return conn;
         }
@@ -1171,6 +1228,7 @@ public class MainActivity extends Activity {
             if (!succeeded) {
                 // Сбой (нет сети, таймаут, rate-limit GitHub): не ставим метку «проверено» —
                 // при следующем старте/возврате в приложение попробуем снова.
+                Log.w(TAG_UPD, "update check: все источники недоступны");
                 if (manual) {
                     Toast.makeText(MainActivity.this, R.string.update_check_fail, Toast.LENGTH_LONG).show();
                 }
@@ -1185,13 +1243,18 @@ public class MainActivity extends Activity {
             }
             String tag = result[0];
             String url = result[1];
-            if (tag.equals(prefs.getString(PREF_SKIP_UPDATE, ""))) return;
+            if (tag.equals(prefs.getString(PREF_SKIP_UPDATE, ""))) {
+                Log.i(TAG_UPD, "update check: тег " + tag + " в skip-списке");
+                return;
+            }
             if (!isNewerVersion(tag)) {
+                Log.i(TAG_UPD, "update check: установлена последняя версия (" + tag + ")");
                 if (manual) {
                     Toast.makeText(MainActivity.this, R.string.update_no_new, Toast.LENGTH_SHORT).show();
                 }
                 return;
             }
+            Log.i(TAG_UPD, "update check: найдено обновление " + tag);
             showUpdateDialog(tag, url);
         }
     }

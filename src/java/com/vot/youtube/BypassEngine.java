@@ -49,9 +49,6 @@ public final class BypassEngine {
             "googlesyndication.com", "doubleclick.net", "google.com", "google.ru"
     };
 
-    /** Адрес TUN, который мы сами назначаем приложению (см. BypassVpnService). */
-    private static final int LOCAL_TUN_IP = 0x0A090002; // 10.9.0.2
-
     private static final long FLOW_IDLE_MS = 120_000L;
     private static final long DNS_IDLE_MS = 60_000L;
     private static final long SWEEP_INTERVAL_MS = 30_000L;
@@ -114,6 +111,7 @@ public final class BypassEngine {
 
     private void loop() {
         byte[] buf = new byte[65535];
+        long seen = 0L;
         while (running) {
             int n;
             try {
@@ -132,14 +130,24 @@ public final class BypassEngine {
                     off = n;
                     break;
                 }
-                if (ip.srcIp == LOCAL_TUN_IP) {
-                    off += ip.totalLen;
-                    continue;
-                }
                 if (BypassProto.isIpFragment(buf, off)) {
                     // IP-фрагментацию не поддерживаем — дроп
                     off += ip.totalLen;
                     continue;
+                }
+                // Важно: НЕ фильтруем по srcIp == 10.9.0.2 (LOCAL_TUN_IP) — весь
+                // трафик приложения через TUN идёт именно с этим адресом источника,
+                // фильтр по нему молча убивал весь трафик (чёрная дыра).
+                seen++;
+                if (seen <= 3) {
+                    // краткая наблюдаемость на старте: что реально читаем из TUN
+                    Log.i(TAG, "tun pkt src=" + BypassProto.ipToString(ip.srcIp)
+                            + " dst=" + BypassProto.ipToString(ip.dstIp)
+                            + " proto=" + (ip.protocol == BypassProto.PROTO_TCP ? "tcp"
+                            : ip.protocol == BypassProto.PROTO_UDP ? "udp"
+                            : String.valueOf(ip.protocol)));
+                } else if ((seen % 500) == 0) {
+                    Log.i(TAG, "tun seen " + seen + " pkts");
                 }
                 switch (ip.protocol) {
                     case BypassProto.PROTO_TCP:
@@ -250,6 +258,7 @@ public final class BypassEngine {
     /** Штатная остановка (из сервиса) — без onStop. */
     public void shutdown() {
         if (stopped) return;
+        Log.i(TAG, "engine shutdown begin");
         stopped = true;
         running = false;
         synchronized (writeLock) {
@@ -274,6 +283,7 @@ public final class BypassEngine {
             tun.close();
         } catch (IOException ignored) {
         }
+        Log.i(TAG, "engine shutdown done");
     }
 
     /** Аварийная остановка: движок сам просит сервис снять VPN. */

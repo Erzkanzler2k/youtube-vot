@@ -24,6 +24,7 @@ import android.app.Service;
 import android.content.Intent;
 import android.content.pm.ApplicationInfo;
 import android.content.pm.PackageManager;
+import android.content.pm.ServiceInfo;
 import android.net.VpnService;
 import android.os.Build;
 import android.os.IBinder;
@@ -46,6 +47,15 @@ public class BypassVpnService extends VpnService {
     private volatile boolean running;
     private BypassEngine engine;
 
+    private void startForegroundCompat() {
+        if (Build.VERSION.SDK_INT >= 34) {
+            startForeground(NOTIF_ID, buildNotification(),
+                    ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE);
+        } else {
+            startForeground(NOTIF_ID, buildNotification());
+        }
+    }
+
     /** Готов ли движок реально перехватывать трафик (этап 2+). */
     public static boolean isReady() {
         return BypassEngine.isAvailable();
@@ -60,14 +70,29 @@ public class BypassVpnService extends VpnService {
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
         if (intent != null && ACTION_STOP.equals(intent.getAction())) {
+            // Снимаем VPN СИНХРОННО, не дожидаясь onDestroy: на эмуляторе/ряде
+            // систем после прихода stop-команды AMS может не довести сервис до
+            // onDestroy (startRequested=false), и без прямого shutdown() здесь
+            // tun0 остался бы висеть. shutdown() идемпотентен и закрывает TUN
+            // (fd) — система снимает VPN-сеть сразу при закрытии fd.
+            Log.i(TAG, "stop cmd id=" + startId);
+            running = false;
+            if (engine != null) {
+                engine.shutdown();
+            }
+            stopForeground(STOP_FOREGROUND_REMOVE);
+            stopSelf(startId);
             stopSelf();
             return START_NOT_STICKY;
         }
         if (running) return START_STICKY;
+        Log.i(TAG, "start cmd id=" + startId);
 
         // С API 26 сервис, запущенный через startForegroundService, обязан
         // вызвать startForeground в течение 5 секунд — делаем это сразу.
-        startForeground(NOTIF_ID, buildNotification());
+        // С API 34 (targetSdk 34+) обязателен тип FGS; для VPN-сервиса это
+        // specialUse (объявлен в манифесте). Без типа — MissingForegroundServiceTypeException.
+        startForegroundCompat();
 
         if (!BypassEngine.isAvailable()) {
             // Движок должен быть доступен всегда (этап 2+); если нет — не поднимаем VPN.
@@ -146,6 +171,7 @@ public class BypassVpnService extends VpnService {
 
     @Override
     public void onDestroy() {
+        Log.i(TAG, "onDestroy begin");
         running = false;
         if (engine != null) {
             engine.shutdown();
@@ -153,6 +179,7 @@ public class BypassVpnService extends VpnService {
         }
         setEnabled(false);
         super.onDestroy();
+        Log.i(TAG, "onDestroy done");
     }
 
     @Override
