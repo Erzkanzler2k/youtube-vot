@@ -11,13 +11,19 @@ import android.animation.ValueAnimator;
 import android.annotation.SuppressLint;
 import android.app.Activity;
 import android.app.AlertDialog;
+import android.app.DownloadManager;
 import android.content.ActivityNotFoundException;
+import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.DialogInterface;
 import android.content.Intent;
+import android.content.IntentFilter;
 import android.content.SharedPreferences;
 import android.content.pm.ActivityInfo;
+import android.content.pm.PackageInfo;
+import android.content.pm.PackageManager;
 import android.content.res.AssetManager;
+import android.database.Cursor;
 import android.graphics.Color;
 import android.graphics.Insets;
 import android.graphics.PorterDuff;
@@ -29,6 +35,7 @@ import android.os.Build;
 import android.os.Bundle;
 import android.os.Environment;
 import android.provider.MediaStore;
+import android.provider.Settings;
 import android.view.DisplayCutout;
 import android.view.HapticFeedbackConstants;
 import android.view.View;
@@ -54,11 +61,15 @@ import android.widget.Toast;
 import java.io.BufferedReader;
 import java.io.File;
 import java.io.FileOutputStream;
+import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.net.HttpURLConnection;
 import java.net.URL;
 import java.util.Locale;
+
+import org.json.JSONArray;
+import org.json.JSONObject;
 
 public class MainActivity extends Activity {
 
@@ -69,6 +80,14 @@ public class MainActivity extends Activity {
 
     private static final String VOT_BOOTSTRAP = "vot/bootstrap.js";
     private static final String VOT_BUNDLE = "vot/vot.user.js";
+
+    // Автообновление: проверка последнего релиза на GitHub
+    private static final String GITHUB_LATEST_API =
+            "https://api.github.com/repos/Erzkanzler2k/youtube-vot/releases/latest";
+    private static final String APK_ASSET_NAME = "YouTubeVot.apk";
+    private static final String PREF_SKIP_UPDATE = "skip_update_version";
+    private static final String PREF_PENDING_URL = "pending_update_url";
+    private static final String PREF_PENDING_TAG = "pending_update_tag";
 
     private WebView web;
     private FrameLayout customViewContainer;
@@ -82,22 +101,15 @@ public class MainActivity extends Activity {
     private ObjectAnimator splashPulse;
     private View offlineOverlay;
     private ConnectivityManager.NetworkCallback netCallback;
+    private boolean updateChecked;
+    private long currentDownloadId = -1L;
+    private File downloadedApkFile;
+    private DownloadManager downloadManager;
+    private BroadcastReceiver downloadReceiver;
 
     // Базовые отступы панелей (без системных инсетов), чтобы корректно дополнять их
     private int topBarBaseStart, topBarBaseEnd, topBarBaseTop, topBarBaseBottom;
     private int bottomBarBaseStart, bottomBarBaseEnd, bottomBarBaseTop, bottomBarBaseBottom;
-
-    // Нижняя навигация: Главная / Shorts / Популярное
-    private static final int[] TAB_ROOT_IDS = {R.id.tab_home, R.id.tab_shorts, R.id.tab_trending};
-    private static final int[] TAB_IND_IDS = {R.id.tab_home_ind, R.id.tab_shorts_ind, R.id.tab_trending_ind};
-    private static final int[] TAB_ICON_IDS = {R.id.tab_home_icon, R.id.tab_shorts_icon, R.id.tab_trending_icon};
-    private static final int[] TAB_LABEL_IDS = {R.id.tab_home_label, R.id.tab_shorts_label, R.id.tab_trending_label};
-    private static final String[] TAB_PATHS = {
-            "https://m.youtube.com/",
-            "https://m.youtube.com/shorts",
-            "https://m.youtube.com/feed/trending"
-    };
-    private int activeTab = -1;
 
     @SuppressLint("SetJavaScriptEnabled")
     @Override
@@ -162,7 +174,6 @@ public class MainActivity extends Activity {
             public void onPageStarted(WebView view, String url, android.graphics.Bitmap favicon) {
                 injectVot(view);
                 updateNavState();
-                updateActiveTab();
                 hideOffline();
                 view.setAlpha(0f); // плавное появление вместо резкой смены кадра
             }
@@ -170,7 +181,6 @@ public class MainActivity extends Activity {
             @Override
             public void onPageFinished(WebView view, String url) {
                 updateNavState();
-                updateActiveTab();
                 hideSplash();
                 view.animate().alpha(1f).setDuration(220).start();
             }
@@ -305,14 +315,14 @@ public class MainActivity extends Activity {
             }
         });
 
-        setupTabs();
-
         String initial = HOME_URL;
         Uri data = getIntent().getData();
         if (data != null && (data.getHost() == null || data.getHost().contains("youtube") || "youtu.be".equals(data.getHost()))) {
             initial = data.toString();
         }
         web.loadUrl(withRegion(initial));
+
+        registerDownloadReceiver();
     }
 
     /** Инжекция VoT: сначала bootstrap (GM-полифиллы + настройки), затем сам скрипт. */
@@ -515,46 +525,6 @@ public class MainActivity extends Activity {
         btnForward.setAlpha(forward ? 1f : 0.35f);
     }
 
-    /** Настройка вкладок нижней навигации. */
-    private void setupTabs() {
-        for (int i = 0; i < TAB_ROOT_IDS.length; i++) {
-            final int index = i;
-            View tab = findViewById(TAB_ROOT_IDS[i]);
-            tab.setOnClickListener(new View.OnClickListener() {
-                @Override
-                public void onClick(View v) {
-                    pressFeedback(v);
-                    web.loadUrl(withRegion(TAB_PATHS[index]));
-                }
-            });
-        }
-        setActiveTab(0);
-    }
-
-    /** Подсветка активной вкладки по текущему адресу страницы. */
-    private void updateActiveTab() {
-        String url = web.getUrl();
-        if (url == null) return;
-        int idx = -1;
-        if (url.startsWith("https://m.youtube.com/shorts")) idx = 1;
-        else if (url.startsWith("https://m.youtube.com/feed/trending")) idx = 2;
-        else if (url.startsWith("https://m.youtube.com/")) idx = 0;
-        if (idx >= 0) setActiveTab(idx);
-    }
-
-    private void setActiveTab(int index) {
-        if (index < 0 || index >= TAB_ROOT_IDS.length) return;
-        activeTab = index;
-        for (int i = 0; i < TAB_ROOT_IDS.length; i++) {
-            boolean active = i == index;
-            findViewById(TAB_IND_IDS[i]).setVisibility(active ? View.VISIBLE : View.GONE);
-            ((ImageView) findViewById(TAB_ICON_IDS[i]))
-                    .setColorFilter(active ? 0xFFFFFFFF : 0xFF9AA0A6, PorterDuff.Mode.SRC_IN);
-            ((TextView) findViewById(TAB_LABEL_IDS[i]))
-                    .setTextColor(active ? 0xFFFFFFFF : 0xFFB3B3B3);
-        }
-    }
-
     /** Лёгкая вибрация + микро-пульс иконки при нажатии. */
     private void pressFeedback(final View v) {
         v.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY);
@@ -735,9 +705,306 @@ public class MainActivity extends Activity {
         netCallback = null;
     }
 
+    /* ---------------- Автообновление с GitHub ---------------- */
+
+    private void checkForUpdate() {
+        if (updateChecked || web == null) return;
+        updateChecked = true;
+        new CheckUpdateTask().execute();
+    }
+
+    /** Спрашиваем GitHub, какая версия сейчас в релизах. */
+    private class CheckUpdateTask extends AsyncTask<Void, Void, String[]> {
+        @Override
+        protected String[] doInBackground(Void... ignore) {
+            HttpURLConnection conn = null;
+            InputStream in = null;
+            try {
+                URL url = new URL(GITHUB_LATEST_API);
+                conn = (HttpURLConnection) url.openConnection();
+                conn.setConnectTimeout(10000);
+                conn.setReadTimeout(10000);
+                conn.setRequestProperty("User-Agent", "YouTubeVot");
+                conn.setRequestProperty("Accept", "application/vnd.github+json");
+                if (conn.getResponseCode() != HttpURLConnection.HTTP_OK) return null;
+                in = conn.getInputStream();
+                JSONObject root = new JSONObject(readAll(in));
+                String tag = root.optString("tag_name", "");
+                if (tag.isEmpty()) return null;
+                JSONArray assets = root.optJSONArray("assets");
+                if (assets == null) return null;
+                for (int i = 0; i < assets.length(); i++) {
+                    JSONObject asset = assets.getJSONObject(i);
+                    if (APK_ASSET_NAME.equals(asset.optString("name", ""))) {
+                        String downloadUrl = asset.optString("browser_download_url", "");
+                        if (!downloadUrl.isEmpty()) return new String[]{tag, downloadUrl};
+                    }
+                }
+                return null;
+            } catch (Exception e) {
+                return null;
+            } finally {
+                if (in != null) {
+                    try {
+                        in.close();
+                    } catch (IOException ignored) {
+                    }
+                }
+                if (conn != null) conn.disconnect();
+            }
+        }
+
+        @Override
+        protected void onPostExecute(String[] result) {
+            if (result == null || isFinishing() || isDestroyed()) return;
+            String tag = result[0];
+            String url = result[1];
+            SharedPreferences prefs = regionPrefs();
+            if (tag.equals(prefs.getString(PREF_SKIP_UPDATE, ""))) return;
+            if (!isNewerVersion(tag)) return;
+            showUpdateDialog(tag, url);
+        }
+    }
+
+    private String readAll(InputStream in) throws IOException {
+        StringBuilder sb = new StringBuilder();
+        byte[] buf = new byte[4096];
+        int n;
+        while ((n = in.read(buf)) != -1) {
+            sb.append(new String(buf, 0, n, "UTF-8"));
+        }
+        return sb.toString();
+    }
+
+    private boolean isNewerVersion(String latestTag) {
+        int[] cur = parseVersion(currentVersionName());
+        int[] latest = parseVersion(latestTag);
+        if (cur == null || latest == null) return false;
+        for (int i = 0; i < 3; i++) {
+            if (latest[i] > cur[i]) return true;
+            if (latest[i] < cur[i]) return false;
+        }
+        return false;
+    }
+
+    private int[] parseVersion(String v) {
+        String clean = (v == null ? "" : v).replaceFirst("^[vV]", "").trim();
+        String[] parts = clean.split("\\.");
+        if (parts.length < 2) return null;
+        try {
+            return new int[]{
+                    Integer.parseInt(parts[0]),
+                    Integer.parseInt(parts[1]),
+                    parts.length > 2 ? Integer.parseInt(parts[2]) : 0
+            };
+        } catch (NumberFormatException e) {
+            return null;
+        }
+    }
+
+    private String currentVersionName() {
+        try {
+            return getPackageManager().getPackageInfo(getPackageName(), 0).versionName;
+        } catch (Exception e) {
+            return "0.0.0";
+        }
+    }
+
+    private void showUpdateDialog(final String tag, final String url) {
+        new AlertDialog.Builder(this)
+                .setTitle("Обновление YouTube VoT")
+                .setMessage("Доступна новая версия " + tag + ".\nСкачать и установить?")
+                .setPositiveButton("Обновить", new DialogInterface.OnClickListener() {
+                    @Override
+                    public void onClick(DialogInterface d, int w) {
+                        startUpdateDownload(tag, url);
+                    }
+                })
+                .setNegativeButton("Позже", new DialogInterface.OnClickListener() {
+                    @Override
+                    public void onClick(DialogInterface d, int w) {
+                        regionPrefs().edit().putString(PREF_SKIP_UPDATE, tag).apply();
+                    }
+                })
+                .setCancelable(false)
+                .show();
+    }
+
+    private void startUpdateDownload(final String tag, final String url) {
+        // На Android 8+ установка из «неизвестных источников» требует разрешения
+        if (Build.VERSION.SDK_INT >= 26 && !getPackageManager().canRequestPackageInstalls()) {
+            SharedPreferences prefs = regionPrefs();
+            prefs.edit().putString(PREF_PENDING_URL, url).putString(PREF_PENDING_TAG, tag).apply();
+            new AlertDialog.Builder(this)
+                    .setTitle("Разрешение на установку")
+                    .setMessage("Android просит разрешить установку приложений из этого источника.\n" +
+                            "Откройте настройки — загрузка продолжится сразу после возврата.")
+                    .setPositiveButton("Открыть настройки", new DialogInterface.OnClickListener() {
+                        @Override
+                        public void onClick(DialogInterface d, int w) {
+                            try {
+                                Intent i = new Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
+                                        Uri.parse("package:" + getPackageName()));
+                                startActivity(i);
+                            } catch (Exception e) {
+                                try {
+                                    startActivity(new Intent(Settings.ACTION_MANAGE_APPLICATIONS_SETTINGS));
+                                } catch (Exception ignored) {
+                                }
+                            }
+                        }
+                    })
+                    .setNegativeButton("Отмена", null)
+                    .show();
+            return;
+        }
+        doDownloadUpdate(url, tag);
+    }
+
+    private void doDownloadUpdate(String url, String tag) {
+        downloadManager = (DownloadManager) getSystemService(DOWNLOAD_SERVICE);
+        if (downloadManager == null) return;
+        String fileName = "YouTubeVot-" + tag.replaceAll("[^A-Za-z0-9._-]", "") + ".apk";
+        File dir = getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS);
+        if (dir == null) dir = getFilesDir();
+        downloadedApkFile = new File(dir, fileName);
+
+        DownloadManager.Request req = new DownloadManager.Request(Uri.parse(url));
+        req.setTitle("Обновление YouTube VoT");
+        req.setDescription("Скачивание новой версии…");
+        req.setMimeType("application/vnd.android.package-archive");
+        req.setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED);
+        req.setAllowedOverMetered(true);
+        req.setAllowedOverRoaming(false);
+        req.setDestinationInExternalFilesDir(this, Environment.DIRECTORY_DOWNLOADS, fileName);
+        try {
+            currentDownloadId = downloadManager.enqueue(req);
+            Toast.makeText(this, "Скачивание обновления…", Toast.LENGTH_SHORT).show();
+        } catch (Exception e) {
+            Toast.makeText(this, "Не удалось начать обновление", Toast.LENGTH_SHORT).show();
+        }
+    }
+
+    private void registerDownloadReceiver() {
+        if (downloadReceiver != null) return;
+        downloadReceiver = new BroadcastReceiver() {
+            @Override
+            public void onReceive(Context context, Intent intent) {
+                if (DownloadManager.ACTION_DOWNLOAD_COMPLETE.equals(intent.getAction())) {
+                    long id = intent.getLongExtra(DownloadManager.EXTRA_DOWNLOAD_ID, -1L);
+                    if (id == currentDownloadId) {
+                        currentDownloadId = -1L;
+                        handleDownloadComplete(id);
+                    }
+                }
+            }
+        };
+        try {
+            registerReceiver(downloadReceiver,
+                    new IntentFilter(DownloadManager.ACTION_DOWNLOAD_COMPLETE));
+        } catch (Exception ignored) {
+        }
+    }
+
+    private void unregisterDownloadReceiver() {
+        if (downloadReceiver != null) {
+            try {
+                unregisterReceiver(downloadReceiver);
+            } catch (Exception ignored) {
+            }
+            downloadReceiver = null;
+        }
+    }
+
+    private void handleDownloadComplete(long id) {
+        DownloadManager dm = (DownloadManager) getSystemService(DOWNLOAD_SERVICE);
+        if (dm == null) return;
+        Cursor c = null;
+        int status = -1;
+        try {
+            c = dm.query(new DownloadManager.Query().setFilterById(id));
+            if (c != null && c.moveToFirst()) {
+                status = c.getInt(c.getColumnIndexOrThrow(DownloadManager.COLUMN_STATUS));
+            }
+        } catch (Exception ignored) {
+        } finally {
+            if (c != null) c.close();
+        }
+        if (status != DownloadManager.STATUS_SUCCESSFUL) {
+            Toast.makeText(this, "Не удалось скачать обновление", Toast.LENGTH_SHORT).show();
+            if (downloadedApkFile != null) downloadedApkFile.delete();
+            return;
+        }
+        if (downloadedApkFile == null || !verifyApkSignature(downloadedApkFile)) {
+            new AlertDialog.Builder(this)
+                    .setTitle("Ошибка проверки")
+                    .setMessage("Скачанный файл не прошёл проверку подписи. Обновление отменено.")
+                    .setPositiveButton("ОК", null)
+                    .show();
+            if (downloadedApkFile != null) downloadedApkFile.delete();
+            return;
+        }
+        installApk(id);
+    }
+
+    /** Файл подписан тем же ключом, что и установленное приложение. */
+    private boolean verifyApkSignature(File apk) {
+        try {
+            PackageManager pm = getPackageManager();
+            PackageInfo cur = pm.getPackageInfo(getPackageName(), PackageManager.GET_SIGNATURES);
+            PackageInfo update = pm.getPackageArchiveInfo(apk.getAbsolutePath(), PackageManager.GET_SIGNATURES);
+            if (cur == null || update == null || cur.signatures == null || update.signatures == null
+                    || cur.signatures.length == 0 || update.signatures.length == 0) {
+                return false;
+            }
+            return cur.signatures[0].toCharsString().equals(update.signatures[0].toCharsString());
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    private void installApk(long id) {
+        if (Build.VERSION.SDK_INT >= 26 && !getPackageManager().canRequestPackageInstalls()) {
+            Toast.makeText(this, "Сначала разрешите установку из этого источника", Toast.LENGTH_LONG).show();
+            return;
+        }
+        DownloadManager dm = (DownloadManager) getSystemService(DOWNLOAD_SERVICE);
+        if (dm == null) return;
+        Uri uri = dm.getUriForDownloadedFile(id);
+        if (uri == null) {
+            Toast.makeText(this, "Не удалось открыть файл обновления", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        Intent intent = new Intent(Intent.ACTION_VIEW);
+        intent.setDataAndType(uri, "application/vnd.android.package-archive");
+        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_GRANT_READ_URI_PERMISSION);
+        try {
+            startActivity(intent);
+        } catch (ActivityNotFoundException e) {
+            Toast.makeText(this, "Не найден установщик приложений", Toast.LENGTH_SHORT).show();
+        }
+    }
+
+    /** Если загрузка была отложена до разрешения — продолжаем её после возврата. */
+    private void checkPendingUpdateDownload() {
+        if (Build.VERSION.SDK_INT < 26) return;
+        try {
+            if (!getPackageManager().canRequestPackageInstalls()) return;
+            SharedPreferences prefs = regionPrefs();
+            if (prefs.contains(PREF_PENDING_URL)) {
+                String url = prefs.getString(PREF_PENDING_URL, "");
+                String tag = prefs.getString(PREF_PENDING_TAG, "");
+                prefs.edit().remove(PREF_PENDING_URL).remove(PREF_PENDING_TAG).apply();
+                if (!url.isEmpty()) doDownloadUpdate(url, tag);
+            }
+        } catch (Exception ignored) {
+        }
+    }
+
     /** Плавное исчезновение сплэша после первой загрузки страницы. */
     private void hideSplash() {
         if (splashOverlay == null || splashOverlay.getVisibility() != View.VISIBLE) return;
+        checkForUpdate(); // один раз, после первой загрузки
         if (splashPulse != null) {
             splashPulse.cancel();
             splashPulse = null;
@@ -772,11 +1039,13 @@ public class MainActivity extends Activity {
     protected void onResume() {
         super.onResume();
         if (web != null) web.onResume();
+        checkPendingUpdateDownload();
     }
 
     @Override
     protected void onDestroy() {
         unregisterNetworkCallback();
+        unregisterDownloadReceiver();
         if (web != null) {
             web.destroy();
             web = null;
