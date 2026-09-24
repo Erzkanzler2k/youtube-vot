@@ -5,7 +5,7 @@
     android:orientation="vertical"
     android:background="@color/background">
 
-    <!-- Верхняя панель: бренд + навигация -->
+    <!-- Верхняя панель: только бренд (управление — внизу, под палец) -->
     <LinearLayout
         android:id="@+id/top_bar"
         android:layout_width="match_parent"
@@ -13,15 +13,14 @@
         android:orientation="horizontal"
         android:gravity="center_vertical"
         android:background="@color/surface"
-        android:paddingStart="10dp"
-        android:paddingEnd="8dp"
-        android:paddingTop="2dp"
-        android:paddingBottom="2dp">
+        android:paddingStart="12dp"
+        android:paddingTop="8dp"
+        android:paddingBottom="8dp">
 
         <ImageView
             android:id="@+id/logo"
-            android:layout_width="24dp"
-            android:layout_height="24dp"
+            android:layout_width="22dp"
+            android:layout_height="22dp"
             android:layout_marginEnd="8dp"
             android:src="@drawable/ic_brand_logo"
             android:importantForAccessibility="no" />
@@ -32,7 +31,7 @@
             android:layout_height="wrap_content"
             android:text="@string/brand_youtube"
             android:textColor="@color/text_primary"
-            android:textSize="17sp"
+            android:textSize="16sp"
             android:textStyle="bold"
             android:layout_marginEnd="3dp" />
 
@@ -41,64 +40,8 @@
             android:layout_height="wrap_content"
             android:text="@string/brand_vot"
             android:textColor="@color/accent"
-            android:textSize="17sp"
+            android:textSize="16sp"
             android:textStyle="bold" />
-
-        <TextView
-            android:layout_width="0dp"
-            android:layout_height="1dp"
-            android:layout_weight="1" />
-
-        <!-- Тач-таргеты 48dp, иконки Material 24dp -->
-        <ImageView
-            android:id="@+id/btn_back"
-            android:layout_width="48dp"
-            android:layout_height="48dp"
-            android:padding="12dp"
-            android:src="@drawable/ic_back"
-            android:tint="@color/icon"
-            android:clickable="true"
-            android:focusable="true"
-            android:background="?android:attr/selectableItemBackgroundBorderless"
-            android:alpha="0.35"
-            android:contentDescription="@string/nav_back" />
-
-        <ImageView
-            android:id="@+id/btn_forward"
-            android:layout_width="48dp"
-            android:layout_height="48dp"
-            android:padding="12dp"
-            android:src="@drawable/ic_forward"
-            android:tint="@color/icon"
-            android:clickable="true"
-            android:focusable="true"
-            android:background="?android:attr/selectableItemBackgroundBorderless"
-            android:alpha="0.35"
-            android:contentDescription="@string/nav_forward" />
-
-        <ImageView
-            android:id="@+id/btn_refresh"
-            android:layout_width="48dp"
-            android:layout_height="48dp"
-            android:padding="12dp"
-            android:src="@drawable/ic_refresh"
-            android:tint="@color/icon"
-            android:clickable="true"
-            android:focusable="true"
-            android:background="?android:attr/selectableItemBackgroundBorderless"
-            android:contentDescription="@string/refresh" />
-
-        <ImageView
-            android:id="@+id/btn_exit"
-            android:layout_width="48dp"
-            android:layout_height="48dp"
-            android:padding="12dp"
-            android:src="@drawable/ic_close"
-            android:tint="@color/icon"
-            android:clickable="true"
-            android:focusable="true"
-            android:background="?android:attr/selectableItemBackgroundBorderless"
-            android:contentDescription="@string/exit" />
     </LinearLayout>
 
     <!-- Тонкий прогресс-бар загрузки -->
@@ -126,126 +69,203 @@
         android:layout_height="1dp"
         android:background="@color/divider" />
 
-    <!-- Нижняя навигация: Главная / Shorts / Популярное -->
+    <!-- Нижняя панель: вкладки + управление -->
     <LinearLayout
         android:id="@+id/bottom_bar"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:orientation="horizontal"
+        android:orientation="vertical"
         android:background="@color/surface">
 
         <LinearLayout
-            android:id="@+id/tab_home"
-            android:layout_width="0dp"
-            android:layout_height="match_parent"
-            android:layout_weight="1"
-            android:orientation="vertical"
-            android:gravity="center_horizontal"
-            android:clickable="true"
-            android:focusable="true"
-            android:background="?android:attr/selectableItemBackground"
-            android:contentDescription="@string/tab_home"
-            android:paddingTop="4dp">
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal">
 
-            <View
-                android:id="@+id/tab_home_ind"
-                android:layout_width="34dp"
-                android:layout_height="3dp"
-                android:background="@drawable/tab_indicator"
-                android:visibility="gone" />
-
-            <ImageView
-                android:id="@+id/tab_home_icon"
-                android:layout_width="24dp"
-                android:layout_height="24dp"
-                android:layout_marginTop="3dp"
-                android:src="@drawable/ic_tab_home"
-                android:importantForAccessibility="no" />
-
-            <TextView
-                android:id="@+id/tab_home_label"
-                android:layout_width="wrap_content"
+            <LinearLayout
+                android:id="@+id/tab_home"
+                android:layout_width="0dp"
                 android:layout_height="wrap_content"
-                android:text="@string/tab_home"
-                android:textSize="10sp"
-                android:textColor="@color/text_secondary"
-                android:importantForAccessibility="no" />
+                android:layout_weight="1"
+                android:orientation="vertical"
+                android:gravity="center_horizontal"
+                android:clickable="true"
+                android:focusable="true"
+                android:background="?android:attr/selectableItemBackground"
+                android:contentDescription="@string/tab_home"
+                android:paddingTop="4dp">
+
+                <View
+                    android:id="@+id/tab_home_ind"
+                    android:layout_width="34dp"
+                    android:layout_height="3dp"
+                    android:background="@drawable/tab_indicator"
+                    android:visibility="gone" />
+
+                <ImageView
+                    android:id="@+id/tab_home_icon"
+                    android:layout_width="24dp"
+                    android:layout_height="24dp"
+                    android:layout_marginTop="3dp"
+                    android:src="@drawable/ic_tab_home"
+                    android:importantForAccessibility="no" />
+
+                <TextView
+                    android:id="@+id/tab_home_label"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="@string/tab_home"
+                    android:textSize="10sp"
+                    android:textColor="@color/text_secondary"
+                    android:importantForAccessibility="no" />
+            </LinearLayout>
+
+            <LinearLayout
+                android:id="@+id/tab_shorts"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:orientation="vertical"
+                android:gravity="center_horizontal"
+                android:clickable="true"
+                android:focusable="true"
+                android:background="?android:attr/selectableItemBackground"
+                android:contentDescription="@string/tab_shorts"
+                android:paddingTop="4dp">
+
+                <View
+                    android:id="@+id/tab_shorts_ind"
+                    android:layout_width="34dp"
+                    android:layout_height="3dp"
+                    android:background="@drawable/tab_indicator"
+                    android:visibility="gone" />
+
+                <ImageView
+                    android:id="@+id/tab_shorts_icon"
+                    android:layout_width="24dp"
+                    android:layout_height="24dp"
+                    android:layout_marginTop="3dp"
+                    android:src="@drawable/ic_tab_shorts"
+                    android:importantForAccessibility="no" />
+
+                <TextView
+                    android:id="@+id/tab_shorts_label"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="@string/tab_shorts"
+                    android:textSize="10sp"
+                    android:textColor="@color/text_secondary"
+                    android:importantForAccessibility="no" />
+            </LinearLayout>
+
+            <LinearLayout
+                android:id="@+id/tab_trending"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:orientation="vertical"
+                android:gravity="center_horizontal"
+                android:clickable="true"
+                android:focusable="true"
+                android:background="?android:attr/selectableItemBackground"
+                android:contentDescription="@string/tab_trending"
+                android:paddingTop="4dp">
+
+                <View
+                    android:id="@+id/tab_trending_ind"
+                    android:layout_width="34dp"
+                    android:layout_height="3dp"
+                    android:background="@drawable/tab_indicator"
+                    android:visibility="gone" />
+
+                <ImageView
+                    android:id="@+id/tab_trending_icon"
+                    android:layout_width="24dp"
+                    android:layout_height="24dp"
+                    android:layout_marginTop="3dp"
+                    android:src="@drawable/ic_tab_trending"
+                    android:importantForAccessibility="no" />
+
+                <TextView
+                    android:id="@+id/tab_trending_label"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="@string/tab_trending"
+                    android:textSize="10sp"
+                    android:textColor="@color/text_secondary"
+                    android:importantForAccessibility="no" />
+            </LinearLayout>
         </LinearLayout>
 
-        <LinearLayout
-            android:id="@+id/tab_shorts"
-            android:layout_width="0dp"
-            android:layout_height="match_parent"
-            android:layout_weight="1"
-            android:orientation="vertical"
-            android:gravity="center_horizontal"
-            android:clickable="true"
-            android:focusable="true"
-            android:background="?android:attr/selectableItemBackground"
-            android:contentDescription="@string/tab_shorts"
-            android:paddingTop="4dp">
+        <!-- Разделитель между вкладками и управлением -->
+        <View
+            android:layout_width="match_parent"
+            android:layout_height="1dp"
+            android:background="@color/divider" />
 
-            <View
-                android:id="@+id/tab_shorts_ind"
-                android:layout_width="34dp"
-                android:layout_height="3dp"
-                android:background="@drawable/tab_indicator"
-                android:visibility="gone" />
+        <!-- Управление: назад / вперёд / обновить / выход (в зоне большого пальца) -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:paddingStart="4dp"
+            android:paddingEnd="4dp"
+            android:paddingBottom="2dp">
 
             <ImageView
-                android:id="@+id/tab_shorts_icon"
-                android:layout_width="24dp"
-                android:layout_height="24dp"
-                android:layout_marginTop="3dp"
-                android:src="@drawable/ic_tab_shorts"
-                android:importantForAccessibility="no" />
-
-            <TextView
-                android:id="@+id/tab_shorts_label"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="@string/tab_shorts"
-                android:textSize="10sp"
-                android:textColor="@color/text_secondary"
-                android:importantForAccessibility="no" />
-        </LinearLayout>
-
-        <LinearLayout
-            android:id="@+id/tab_trending"
-            android:layout_width="0dp"
-            android:layout_height="match_parent"
-            android:layout_weight="1"
-            android:orientation="vertical"
-            android:gravity="center_horizontal"
-            android:clickable="true"
-            android:focusable="true"
-            android:background="?android:attr/selectableItemBackground"
-            android:contentDescription="@string/tab_trending"
-            android:paddingTop="4dp">
-
-            <View
-                android:id="@+id/tab_trending_ind"
-                android:layout_width="34dp"
-                android:layout_height="3dp"
-                android:background="@drawable/tab_indicator"
-                android:visibility="gone" />
+                android:id="@+id/btn_back"
+                android:layout_width="0dp"
+                android:layout_height="46dp"
+                android:layout_weight="1"
+                android:padding="11dp"
+                android:src="@drawable/ic_back"
+                android:tint="@color/icon"
+                android:clickable="true"
+                android:focusable="true"
+                android:background="?android:attr/selectableItemBackgroundBorderless"
+                android:alpha="0.35"
+                android:contentDescription="@string/nav_back" />
 
             <ImageView
-                android:id="@+id/tab_trending_icon"
-                android:layout_width="24dp"
-                android:layout_height="24dp"
-                android:layout_marginTop="3dp"
-                android:src="@drawable/ic_tab_trending"
-                android:importantForAccessibility="no" />
+                android:id="@+id/btn_forward"
+                android:layout_width="0dp"
+                android:layout_height="46dp"
+                android:layout_weight="1"
+                android:padding="11dp"
+                android:src="@drawable/ic_forward"
+                android:tint="@color/icon"
+                android:clickable="true"
+                android:focusable="true"
+                android:background="?android:attr/selectableItemBackgroundBorderless"
+                android:alpha="0.35"
+                android:contentDescription="@string/nav_forward" />
 
-            <TextView
-                android:id="@+id/tab_trending_label"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="@string/tab_trending"
-                android:textSize="10sp"
-                android:textColor="@color/text_secondary"
-                android:importantForAccessibility="no" />
+            <ImageView
+                android:id="@+id/btn_refresh"
+                android:layout_width="0dp"
+                android:layout_height="46dp"
+                android:layout_weight="1"
+                android:padding="11dp"
+                android:src="@drawable/ic_refresh"
+                android:tint="@color/icon"
+                android:clickable="true"
+                android:focusable="true"
+                android:background="?android:attr/selectableItemBackgroundBorderless"
+                android:contentDescription="@string/refresh" />
+
+            <ImageView
+                android:id="@+id/btn_exit"
+                android:layout_width="0dp"
+                android:layout_height="46dp"
+                android:layout_weight="1"
+                android:padding="11dp"
+                android:src="@drawable/ic_close"
+                android:tint="@color/icon"
+                android:clickable="true"
+                android:focusable="true"
+                android:background="?android:attr/selectableItemBackgroundBorderless"
+                android:contentDescription="@string/exit" />
         </LinearLayout>
     </LinearLayout>
 
