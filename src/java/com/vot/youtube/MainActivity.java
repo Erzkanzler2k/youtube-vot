@@ -10,9 +10,12 @@ import android.animation.ObjectAnimator;
 import android.animation.ValueAnimator;
 import android.annotation.SuppressLint;
 import android.app.Activity;
+import android.app.AlertDialog;
 import android.content.ActivityNotFoundException;
 import android.content.Context;
+import android.content.DialogInterface;
 import android.content.Intent;
+import android.content.SharedPreferences;
 import android.content.pm.ActivityInfo;
 import android.content.res.AssetManager;
 import android.graphics.Color;
@@ -49,6 +52,7 @@ import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.net.HttpURLConnection;
 import java.net.URL;
+import java.util.Locale;
 
 public class MainActivity extends Activity {
 
@@ -76,7 +80,7 @@ public class MainActivity extends Activity {
     private static final int[] TAB_IND_IDS = {R.id.tab_home_ind, R.id.tab_shorts_ind, R.id.tab_trending_ind};
     private static final int[] TAB_ICON_IDS = {R.id.tab_home_icon, R.id.tab_shorts_icon, R.id.tab_trending_icon};
     private static final int[] TAB_LABEL_IDS = {R.id.tab_home_label, R.id.tab_shorts_label, R.id.tab_trending_label};
-    private static final String[] TAB_URLS = {
+    private static final String[] TAB_PATHS = {
             "https://m.youtube.com/",
             "https://m.youtube.com/shorts",
             "https://m.youtube.com/feed/trending"
@@ -101,6 +105,8 @@ public class MainActivity extends Activity {
         progressBar = findViewById(R.id.progress);
         splashOverlay = findViewById(R.id.splash_overlay);
         startSplashPulse();
+        setupRegionPicker();
+        updateRegionLabel();
         btnBack = findViewById(R.id.btn_back);
         btnForward = findViewById(R.id.btn_forward);
 
@@ -280,7 +286,7 @@ public class MainActivity extends Activity {
         if (data != null && (data.getHost() == null || data.getHost().contains("youtube") || "youtu.be".equals(data.getHost()))) {
             initial = data.toString();
         }
-        web.loadUrl(initial);
+        web.loadUrl(withRegion(initial));
     }
 
     /** Инжекция VoT: сначала bootstrap (GM-полифиллы + настройки), затем сам скрипт. */
@@ -432,7 +438,7 @@ public class MainActivity extends Activity {
                 @Override
                 public void onClick(View v) {
                     pressFeedback(v);
-                    web.loadUrl(TAB_URLS[index]);
+                    web.loadUrl(withRegion(TAB_PATHS[index]));
                 }
             });
         }
@@ -486,6 +492,92 @@ public class MainActivity extends Activity {
             splashPulse.setRepeatMode(ValueAnimator.REVERSE);
             splashPulse.start();
         }
+    }
+
+    /* ---------------- Страна рекомендуемого контента (регион YouTube) ---------------- */
+
+    private SharedPreferences regionPrefs() {
+        return getSharedPreferences("vot_prefs", MODE_PRIVATE);
+    }
+
+    private String regionCode() {
+        return regionPrefs().getString("region", "auto");
+    }
+
+    private String deviceCode() {
+        Locale l = Locale.getDefault();
+        String c = l.getCountry().toLowerCase(Locale.US);
+        return c.isEmpty() ? "us" : c;
+    }
+
+    private String effectiveCode() {
+        String stored = regionCode();
+        return "auto".equals(stored) ? deviceCode() : stored;
+    }
+
+    /** Добавляет hl/gl-параметры к URL, сохраняя существующий query. */
+    private String withRegion(String url) {
+        String gl = effectiveCode();
+        String sep = url.contains("?") ? "&" : "?";
+        return url + sep + "hl=ru&gl=" + gl;
+    }
+
+    private int indexOfCode(String[] codes, String code) {
+        for (int i = 0; i < codes.length; i++) {
+            if (codes[i].equals(code)) return i;
+        }
+        return -1;
+    }
+
+    private void setupRegionPicker() {
+        View row = findViewById(R.id.splash_region);
+        if (row == null) return;
+        row.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                pressFeedback(v);
+                showRegionDialog();
+            }
+        });
+    }
+
+    private void showRegionDialog() {
+        final String[] labels = getResources().getStringArray(R.array.region_labels);
+        final String[] codes = getResources().getStringArray(R.array.region_codes);
+        int checked = indexOfCode(codes, regionCode());
+        if (checked < 0) checked = 0;
+        new AlertDialog.Builder(this)
+                .setTitle(R.string.region_title)
+                .setSingleChoiceItems(labels, checked, null)
+                .setPositiveButton(android.R.string.ok, new DialogInterface.OnClickListener() {
+                    @Override
+                    public void onClick(DialogInterface d, int w) {
+                        int sel = ((AlertDialog) d).getListView().getCheckedItemPosition();
+                        applyRegion(sel);
+                    }
+                })
+                .show();
+    }
+
+    private void applyRegion(int index) {
+        String[] codes = getResources().getStringArray(R.array.region_codes);
+        if (index < 0 || index >= codes.length) return;
+        regionPrefs().edit().putString("region", codes[index]).apply();
+        updateRegionLabel();
+        web.loadUrl(withRegion(HOME_URL));
+    }
+
+    private void updateRegionLabel() {
+        TextView label = findViewById(R.id.splash_region_label);
+        if (label == null) return;
+        String[] labels = getResources().getStringArray(R.array.region_labels);
+        String[] codes = getResources().getStringArray(R.array.region_codes);
+        String eff = effectiveCode();
+        int idx = indexOfCode(codes, eff);
+        String name = idx >= 0 ? labels[idx] : eff.toUpperCase(Locale.US);
+        StringBuilder sb = new StringBuilder(getString(R.string.region_label_prefix)).append(name);
+        if ("auto".equals(regionCode())) sb.append(getString(R.string.region_by_device));
+        label.setText(sb.toString());
     }
 
     /** Плавное исчезновение сплэша после первой загрузки страницы. */

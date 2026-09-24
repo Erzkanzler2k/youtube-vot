@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- 0 = "Как на устройстве" (авто) -->
+    <string-array name="region_labels">
+        <item>Как на устройстве</item>
+        <item>Россия</item>
+        <item>Украина</item>
+        <item>Беларусь</item>
+        <item>Казахстан</item>
+        <item>США</item>
+        <item>Великобритания</item>
+        <item>Германия</item>
+        <item>Франция</item>
+        <item>Испания</item>
+        <item>Италия</item>
+        <item>Польша</item>
+        <item>Турция</item>
+        <item>Индия</item>
+        <item>Япония</item>
+        <item>Южная Корея</item>
+        <item>Бразилия</item>
+        <item>Мексика</item>
+    </string-array>
+    <string-array name="region_codes">
+        <item>auto</item>
+        <item>ru</item>
+        <item>ua</item>
+        <item>by</item>
+        <item>kz</item>
+        <item>us</item>
+        <item>gb</item>
+        <item>de</item>
+        <item>fr</item>
+        <item>es</item>
+        <item>it</item>
+        <item>pl</item>
+        <item>tr</item>
+        <item>in</item>
+        <item>jp</item>
+        <item>kr</item>
+        <item>br</item>
+        <item>mx</item>
+    </string-array>
+</resources>

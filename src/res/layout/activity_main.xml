@@ -310,6 +310,48 @@
                 android:text="@string/title_sub"
                 android:textColor="@color/text_secondary"
                 android:textSize="13sp" />
+
+            <!-- Выбор страны рекомендуемого контента -->
+            <LinearLayout
+                android:id="@+id/splash_region"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="20dp"
+                android:orientation="horizontal"
+                android:gravity="center_vertical"
+                android:clickable="true"
+                android:focusable="true"
+                android:background="?android:attr/selectableItemBackground"
+                android:paddingStart="14dp"
+                android:paddingEnd="12dp"
+                android:paddingTop="8dp"
+                android:paddingBottom="8dp"
+                android:contentDescription="@string/region_row_desc">
+
+                <ImageView
+                    android:layout_width="18dp"
+                    android:layout_height="18dp"
+                    android:src="@drawable/ic_globe"
+                    android:tint="@color/text_secondary"
+                    android:importantForAccessibility="no" />
+
+                <TextView
+                    android:id="@+id/splash_region_label"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="8dp"
+                    android:layout_marginEnd="2dp"
+                    android:textColor="@color/text_secondary"
+                    android:textSize="13sp"
+                    android:text="" />
+
+                <ImageView
+                    android:layout_width="18dp"
+                    android:layout_height="18dp"
+                    android:src="@drawable/ic_chevron"
+                    android:tint="@color/text_secondary"
+                    android:importantForAccessibility="no" />
+            </LinearLayout>
         </LinearLayout>
     </FrameLayout>
 </LinearLayout>
