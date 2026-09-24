@@ -21,7 +21,7 @@
     <string name="settings_auto_update_desc">Проверять новые версии на GitHub</string>
     <string name="settings_check_update">Проверить обновления</string>
     <string name="settings_check_update_desc">Запросить новую версию с GitHub прямо сейчас</string>
-    <string name="update_check_fail">Не удалось проверить обновления. Проверьте интернет и попробуйте позже.</string>
+    <string name="update_check_fail">Не удалось связаться с GitHub и резервным зеркалом. Проверьте интернет и попробуйте позже.</string>
     <string name="update_no_new">Установлена последняя версия.</string>
     <string name="settings_worker">Сервер перевода</string>
     <string name="settings_worker_desc">Адрес воркера озвучки</string>

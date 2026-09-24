@@ -89,6 +89,11 @@ public class MainActivity extends Activity {
     // Автообновление: проверка последнего релиза на GitHub
     private static final String GITHUB_LATEST_API =
             "https://api.github.com/repos/Erzkanzler2k/youtube-vot/releases/latest";
+    private static final String GITHUB_LATEST_HTML =
+            "https://github.com/Erzkanzler2k/youtube-vot/releases/latest";
+    private static final String JSDELIVR_MANIFEST =
+            "https://cdn.jsdelivr.net/gh/Erzkanzler2k/youtube-vot@latest/release-manifest.json";
+    private static final String RELEASE_TAG_MARKER = "/releases/tag/";
     private static final String APK_ASSET_NAME = "YouTubeVot.apk";
     private static final String PREF_SKIP_UPDATE = "skip_update_version";
     private static final String PREF_PENDING_URL = "pending_update_url";
@@ -961,10 +966,10 @@ public class MainActivity extends Activity {
         new CheckUpdateTask(manual).execute();
     }
 
-    /** Спрашиваем GitHub, какая версия сейчас в релизах. */
+    /** Спрашиваем GitHub (или резервные источники), какая версия сейчас актуальна. */
     private class CheckUpdateTask extends AsyncTask<Void, Void, String[]> {
         private final boolean manual;
-        private boolean succeeded; // true только если GitHub ответил 200 и JSON разобран
+        private boolean succeeded; // true, если хотя бы один источник ответил внятно
 
         CheckUpdateTask(boolean manual) {
             this.manual = manual;
@@ -972,14 +977,22 @@ public class MainActivity extends Activity {
 
         @Override
         protected String[] doInBackground(Void... ignore) {
+            // 1) GitHub API — канон, работает вне блокировок
+            String[] res = fetchGithubApi();
+            if (res != null) return res;
+            // 2) HTML-страница релиза — тег берём из редиректа, читаем только заголовки
+            res = fetchGithubHtml();
+            if (res != null) return res;
+            // 3) CDN-зеркало jsDelivr — манифест из тега репозитория, обходит блокировку GitHub
+            return fetchJsDelivr();
+        }
+
+        /** Источник 1: api.github.com/repos/.../releases/latest */
+        private String[] fetchGithubApi() {
             HttpURLConnection conn = null;
             InputStream in = null;
             try {
-                URL url = new URL(GITHUB_LATEST_API);
-                conn = (HttpURLConnection) url.openConnection();
-                conn.setConnectTimeout(10000);
-                conn.setReadTimeout(10000);
-                conn.setRequestProperty("User-Agent", "YouTubeVot");
+                conn = openConn(new URL(GITHUB_LATEST_API));
                 conn.setRequestProperty("Accept", "application/vnd.github+json");
                 if (conn.getResponseCode() != HttpURLConnection.HTTP_OK) return null;
                 succeeded = true;
@@ -1000,14 +1013,76 @@ public class MainActivity extends Activity {
             } catch (Exception e) {
                 return null;
             } finally {
-                if (in != null) {
-                    try {
-                        in.close();
-                    } catch (IOException ignored) {
-                    }
-                }
-                if (conn != null) conn.disconnect();
+                closeQuietly(in, conn);
             }
+        }
+
+        /** Источник 2: github.com/.../releases/latest — редирект на /releases/tag/<версия>. */
+        private String[] fetchGithubHtml() {
+            HttpURLConnection conn = null;
+            try {
+                conn = openConn(new URL(GITHUB_LATEST_HTML));
+                conn.setInstanceFollowRedirects(false);
+                int code = conn.getResponseCode();
+                if (code != 301 && code != 302 && code != 303 && code != 307 && code != 308) return null;
+                String loc = conn.getHeaderField("Location");
+                if (loc == null) return null;
+                int idx = loc.indexOf(RELEASE_TAG_MARKER);
+                if (idx < 0) return null;
+                String tag = loc.substring(idx + RELEASE_TAG_MARKER.length());
+                int q = tag.indexOf('?');
+                if (q >= 0) tag = tag.substring(0, q);
+                int h = tag.indexOf('#');
+                if (h >= 0) tag = tag.substring(0, h);
+                if (tag.isEmpty() || tag.contains(" ")) return null;
+                succeeded = true;
+                return new String[]{tag,
+                        "https://github.com/Erzkanzler2k/youtube-vot/releases/download/"
+                                + tag + "/" + APK_ASSET_NAME};
+            } catch (Exception e) {
+                return null;
+            } finally {
+                closeQuietly(null, conn);
+            }
+        }
+
+        /** Источник 3: cdn.jsdelivr.net — манифест релиза (@latest), не зависит от доступности GitHub. */
+        private String[] fetchJsDelivr() {
+            HttpURLConnection conn = null;
+            InputStream in = null;
+            try {
+                conn = openConn(new URL(JSDELIVR_MANIFEST));
+                if (conn.getResponseCode() != HttpURLConnection.HTTP_OK) return null;
+                in = conn.getInputStream();
+                JSONObject root = new JSONObject(readAll(in));
+                succeeded = true;
+                String tag = root.optString("tag", "");
+                String apk = root.optString("apk", "");
+                if (tag.isEmpty() || apk.isEmpty()) return null;
+                return new String[]{tag, apk};
+            } catch (Exception e) {
+                return null;
+            } finally {
+                closeQuietly(in, conn);
+            }
+        }
+
+        private HttpURLConnection openConn(URL url) throws IOException {
+            HttpURLConnection conn = (HttpURLConnection) url.openConnection();
+            conn.setConnectTimeout(15000);
+            conn.setReadTimeout(15000);
+            conn.setRequestProperty("User-Agent", "YouTubeVot");
+            return conn;
+        }
+
+        private void closeQuietly(InputStream in, HttpURLConnection conn) {
+            if (in != null) {
+                try {
+                    in.close();
+                } catch (IOException ignored) {
+                }
+            }
+            if (conn != null) conn.disconnect();
         }
 
         @Override
