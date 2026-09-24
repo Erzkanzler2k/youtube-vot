@@ -1380,10 +1380,6 @@ public class MainActivity extends Activity {
     private void doDownloadUpdate(String url, String tag) {
         downloadManager = (DownloadManager) getSystemService(DOWNLOAD_SERVICE);
         if (downloadManager == null) return;
-        String fileName = "YouTubeVot-" + tag.replaceAll("[^A-Za-z0-9._-]", "") + ".apk";
-        File dir = getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS);
-        if (dir == null) dir = getFilesDir();
-        downloadedApkFile = new File(dir, fileName);
 
         DownloadManager.Request req = new DownloadManager.Request(Uri.parse(url));
         req.setTitle("Обновление YouTube VoT");
@@ -1392,7 +1388,12 @@ public class MainActivity extends Activity {
         req.setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED);
         req.setAllowedOverMetered(true);
         req.setAllowedOverRoaming(false);
-        req.setDestinationInExternalFilesDir(this, Environment.DIRECTORY_DOWNLOADS, fileName);
+        // Свой destination не задаём намеренно: на Android 11+ (scoped storage)
+        // setDestinationInExternalFilesDir() падает с IllegalStateException
+        // «Unable to create directory: …/Android/data/<pkg>/files/Download»
+        // и убивает UI-поток ДО enqueue(). Системное хранилище DownloadManager
+        // работает на всех версиях, а файл для проверки подписи копируем
+        // из content-URI в кэш (см. handleDownloadComplete).
         try {
             currentDownloadId = downloadManager.enqueue(req);
             // id сохраняем в prefs: системный броадкаст о завершении загрузки
@@ -1402,6 +1403,7 @@ public class MainActivity extends Activity {
                     .edit().putLong(PREF_DOWNLOAD_ID, currentDownloadId).apply();
             Toast.makeText(this, "Скачивание обновления…", Toast.LENGTH_SHORT).show();
         } catch (Exception e) {
+            Log.w(TAG_UPD, "download enqueue failed", e);
             Toast.makeText(this, "Не удалось начать обновление", Toast.LENGTH_SHORT).show();
         }
     }
@@ -1453,19 +1455,60 @@ public class MainActivity extends Activity {
         }
         if (status != DownloadManager.STATUS_SUCCESSFUL) {
             Toast.makeText(this, "Не удалось скачать обновление", Toast.LENGTH_SHORT).show();
-            if (downloadedApkFile != null) downloadedApkFile.delete();
+            clearDownloadedApk();
             return;
         }
-        if (downloadedApkFile == null || !verifyApkSignature(downloadedApkFile)) {
+        // Файл лежит в системном хранилище DownloadManager и доступен как
+        // content-URI — копируем его в кэш, чтобы PackageManager мог
+        // разобрать подпись (getPackageArchiveInfo работает с файлом).
+        File cached = copyDownloadedApkToCache(dm, id);
+        if (cached == null || !verifyApkSignature(cached)) {
             new AlertDialog.Builder(this)
                     .setTitle("Ошибка проверки")
                     .setMessage("Скачанный файл не прошёл проверку подписи. Обновление отменено.")
                     .setPositiveButton("ОК", null)
                     .show();
-            if (downloadedApkFile != null) downloadedApkFile.delete();
+            clearDownloadedApk();
             return;
         }
         installApk(id);
+    }
+
+    /** Копирует скачанный APK из content-URI DownloadManager в cacheDir. */
+    private File copyDownloadedApkToCache(DownloadManager dm, long id) {
+        try {
+            Uri src = dm.getUriForDownloadedFile(id);
+            if (src == null) return null;
+            File dir = getCacheDir();
+            if (dir == null) dir = getFilesDir();
+            if (dir == null) return null;
+            File dst = new File(dir, "update.apk");
+            InputStream in = getContentResolver().openInputStream(src);
+            if (in == null) return null;
+            FileOutputStream out = null;
+            try {
+                out = new FileOutputStream(dst);
+                byte[] buf = new byte[8192];
+                int n;
+                while ((n = in.read(buf)) > 0) out.write(buf, 0, n);
+                out.flush();
+            } finally {
+                try { if (in != null) in.close(); } catch (IOException ignored) {}
+                try { if (out != null) out.close(); } catch (IOException ignored) {}
+            }
+            downloadedApkFile = dst;
+            return dst;
+        } catch (Exception e) {
+            Log.w(TAG_UPD, "copy downloaded apk failed", e);
+            return null;
+        }
+    }
+
+    private void clearDownloadedApk() {
+        if (downloadedApkFile != null) {
+            downloadedApkFile.delete();
+            downloadedApkFile = null;
+        }
     }
 
     /** Файл подписан тем же ключом, что и установленное приложение. */
@@ -1517,6 +1560,7 @@ public class MainActivity extends Activity {
 
     private void installApk(long id) {
         if (Build.VERSION.SDK_INT >= 26 && !getPackageManager().canRequestPackageInstalls()) {
+            Log.w(TAG_UPD, "install: нет разрешения на установку из источника");
             Toast.makeText(this, "Сначала разрешите установку из этого источника", Toast.LENGTH_LONG).show();
             return;
         }
@@ -1524,15 +1568,18 @@ public class MainActivity extends Activity {
         if (dm == null) return;
         Uri uri = dm.getUriForDownloadedFile(id);
         if (uri == null) {
+            Log.w(TAG_UPD, "install: getUriForDownloadedFile вернул null");
             Toast.makeText(this, "Не удалось открыть файл обновления", Toast.LENGTH_SHORT).show();
             return;
         }
+        Log.i(TAG_UPD, "install: открываю установщик, uri=" + uri);
         Intent intent = new Intent(Intent.ACTION_VIEW);
         intent.setDataAndType(uri, "application/vnd.android.package-archive");
         intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_GRANT_READ_URI_PERMISSION);
         try {
             startActivity(intent);
         } catch (ActivityNotFoundException e) {
+            Log.w(TAG_UPD, "install: установщик не найден", e);
             Toast.makeText(this, "Не найден установщик приложений", Toast.LENGTH_SHORT).show();
         }
     }
