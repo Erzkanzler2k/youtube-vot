@@ -22,6 +22,8 @@ import android.content.SharedPreferences;
 import android.content.pm.ActivityInfo;
 import android.content.pm.PackageInfo;
 import android.content.pm.PackageManager;
+import android.content.pm.Signature;
+import android.content.pm.SigningInfo;
 import android.content.res.AssetManager;
 import android.database.Cursor;
 import android.graphics.Color;
@@ -111,6 +113,11 @@ public class MainActivity extends Activity {
     private static final String PREF_SKIP_UPDATE = "skip_update_version";
     private static final String PREF_PENDING_URL = "pending_update_url";
     private static final String PREF_PENDING_TAG = "pending_update_tag";
+    /** id текущей загрузки APK в DownloadManager (в prefs — для манифестного receiver'а). */
+    static final String PREF_DOWNLOAD_ID = "update_download_id";
+    /** Действие, которым манифестный receiver будит Activity на завершение загрузки. */
+    static final String ACTION_HANDLE_DOWNLOAD = "com.vot.youtube.HANDLE_DOWNLOAD";
+    static final String EXTRA_DOWNLOAD_ID = "download_id";
     private static final String PREF_AUTO_UPDATE = "auto_update";
     private static final String PREF_WORKER_URL = "worker_url";
     // Метки времени последней успешной проверки и последней попытки (для ретраев без спама API)
@@ -363,6 +370,21 @@ public class MainActivity extends Activity {
         web.loadUrl(withRegion(initial));
 
         registerDownloadReceiver();
+        handleDownloadIntent(getIntent());
+    }
+
+    @Override
+    protected void onNewIntent(Intent intent) {
+        super.onNewIntent(intent);
+        setIntent(intent);
+        handleDownloadIntent(intent);
+    }
+
+    /** Завершение загрузки обновления, пришедшее от манифестного receiver'а. */
+    private void handleDownloadIntent(Intent intent) {
+        if (intent == null || !ACTION_HANDLE_DOWNLOAD.equals(intent.getAction())) return;
+        long id = intent.getLongExtra(EXTRA_DOWNLOAD_ID, -1L);
+        if (id >= 0) handleDownloadComplete(id);
     }
 
     /** Инжекция VoT: сначала bootstrap (GM-полифиллы + настройки), затем сам скрипт. */
@@ -1373,6 +1395,11 @@ public class MainActivity extends Activity {
         req.setDestinationInExternalFilesDir(this, Environment.DIRECTORY_DOWNLOADS, fileName);
         try {
             currentDownloadId = downloadManager.enqueue(req);
+            // id сохраняем в prefs: системный броадкаст о завершении загрузки
+            // на API 26+ приходит манифестному receiver'у, а динамический
+            // зарегистрирован не во всех сценариях.
+            getSharedPreferences(BypassVpnService.PREFS_BYPASS, MODE_PRIVATE)
+                    .edit().putLong(PREF_DOWNLOAD_ID, currentDownloadId).apply();
             Toast.makeText(this, "Скачивание обновления…", Toast.LENGTH_SHORT).show();
         } catch (Exception e) {
             Toast.makeText(this, "Не удалось начать обновление", Toast.LENGTH_SHORT).show();
@@ -1445,6 +1472,28 @@ public class MainActivity extends Activity {
     private boolean verifyApkSignature(File apk) {
         try {
             PackageManager pm = getPackageManager();
+            if (Build.VERSION.SDK_INT >= 28) {
+                // На API 28+ PackageInfo.signatures всегда null — только
+                // GET_SIGNING_CERTIFICATES/SigningInfo. Иначе проверка упала бы
+                // с «Ошибка проверки» даже для корректно подписанного APK.
+                PackageInfo cur = pm.getPackageInfo(getPackageName(),
+                        PackageManager.GET_SIGNING_CERTIFICATES);
+                PackageInfo update = pm.getPackageArchiveInfo(apk.getAbsolutePath(),
+                        PackageManager.GET_SIGNING_CERTIFICATES);
+                if (cur == null || update == null
+                        || cur.signingInfo == null || update.signingInfo == null) {
+                    return false;
+                }
+                Signature[] a = signaturesOf(cur.signingInfo);
+                Signature[] b = signaturesOf(update.signingInfo);
+                if (a == null || b == null || a.length == 0 || a.length != b.length) {
+                    return false;
+                }
+                for (int i = 0; i < a.length; i++) {
+                    if (!a[i].toCharsString().equals(b[i].toCharsString())) return false;
+                }
+                return true;
+            }
             PackageInfo cur = pm.getPackageInfo(getPackageName(), PackageManager.GET_SIGNATURES);
             PackageInfo update = pm.getPackageArchiveInfo(apk.getAbsolutePath(), PackageManager.GET_SIGNATURES);
             if (cur == null || update == null || cur.signatures == null || update.signatures == null
@@ -1455,6 +1504,15 @@ public class MainActivity extends Activity {
         } catch (Exception e) {
             return false;
         }
+    }
+
+    private static Signature[] signaturesOf(SigningInfo info) {
+        if (Build.VERSION.SDK_INT >= 28) {
+            return info.hasMultipleSigners()
+                    ? info.getApkContentsSigners()
+                    : info.getSigningCertificateHistory();
+        }
+        return null;
     }
 
     private void installApk(long id) {
