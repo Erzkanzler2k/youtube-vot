@@ -38476,6 +38476,13 @@ var vot = (function(exports) {
 		*/
 		async runAutoTranslate() {
 			await this.videoManager.videoValidator();
+			await this.videoManager.ensureDetectedLanguageForTranslation(this.videoData);
+			const sourceLanguage = normalizeToRequestLang(this.videoData?.detectedLanguage);
+			const responseLanguage = normalizeToRequestLang(this.videoData?.responseLanguage ?? this.data?.responseLanguage);
+			if (sourceLanguage && responseLanguage && sourceLanguage === responseLanguage) {
+				debug.log(`[VOT] Skipping auto-translation: source and response languages match (${sourceLanguage})`);
+				return;
+			}
 			await this.uiManager.handleTranslationBtnClick();
 		}
 		/**
