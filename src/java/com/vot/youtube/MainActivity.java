@@ -11,6 +11,7 @@ import android.app.Activity;
 import android.content.ActivityNotFoundException;
 import android.content.Context;
 import android.content.Intent;
+import android.content.pm.ActivityInfo;
 import android.content.res.AssetManager;
 import android.graphics.Color;
 import android.net.Uri;
@@ -57,6 +58,7 @@ public class MainActivity extends Activity {
 
     private WebView web;
     private FrameLayout customViewContainer;
+    private View topBar;
     private View customView;
     private WebChromeClient.CustomViewCallback customViewCallback;
     private ProgressBar progressBar;
@@ -74,6 +76,7 @@ public class MainActivity extends Activity {
         setNormalSystemUi();
 
         customViewContainer = findViewById(R.id.custom_view_container);
+        topBar = findViewById(R.id.top_bar);
         web = findViewById(R.id.web);
         progressBar = findViewById(R.id.progress);
         btnBack = findViewById(R.id.btn_back);
@@ -152,6 +155,8 @@ public class MainActivity extends Activity {
                                 ViewGroup.LayoutParams.MATCH_PARENT,
                                 ViewGroup.LayoutParams.MATCH_PARENT));
                 web.setVisibility(View.GONE);
+                if (topBar != null) topBar.setVisibility(View.GONE);
+                setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE);
                 setImmersiveSystemUi();
             }
 
@@ -162,6 +167,8 @@ public class MainActivity extends Activity {
                 customView = null;
                 customViewContainer.setVisibility(View.GONE);
                 web.setVisibility(View.VISIBLE);
+                if (topBar != null) topBar.setVisibility(View.VISIBLE);
+                setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_PORTRAIT);
                 setNormalSystemUi();
                 if (customViewCallback != null) {
                     customViewCallback.onCustomViewHidden();

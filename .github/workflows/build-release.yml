@@ -1,0 +1,74 @@
+# ============================================================================
+#  GitHub Actions: автосборка APK и публикация релиза.
+#
+#  Триггеры:
+#    * push тега вида "v*"            -> сборка + создание GitHub Release с APK
+#    * workflow_dispatch (вручную)    -> только сборка (для проверки), без релиза
+#
+#  Раннер: windows-latest. Пайплайн тот же, что и локально (build.ps1):
+#  aapt2 -> javac -> d8 -> ZipFix -> zipalign -> apksigner (общий debug-ключ).
+# ============================================================================
+name: Build APK
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        id: setup-java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      # build.ps1 ждёт layout: <sdk>\build-tools\34.0.0 и <sdk>\platforms\android-35
+      - name: Download Android SDK (build-tools 34 + platform 35)
+        shell: pwsh
+        run: |
+          $sdk = Join-Path $env:RUNNER_TEMP 'android-sdk'
+          New-Item -ItemType Directory -Force -Path (Join-Path $sdk 'build-tools'), (Join-Path $sdk 'platforms') | Out-Null
+          "ANDROID_SDK_ROOT=$sdk" | Out-File -Append -Encoding ascii $env:GITHUB_ENV
+          if (-not (Test-Path (Join-Path $sdk 'build-tools\34.0.0\aapt2.exe'))) {
+            Invoke-WebRequest -Uri 'https://dl.google.com/android/repository/build-tools_r34-windows.zip' -OutFile (Join-Path $env:RUNNER_TEMP 'build-tools.zip')
+            Expand-Archive (Join-Path $env:RUNNER_TEMP 'build-tools.zip') -DestinationPath $sdk
+          }
+          if (-not (Test-Path (Join-Path $sdk 'platforms\android-35\android.jar'))) {
+            Invoke-WebRequest -Uri 'https://dl.google.com/android/repository/platform-35_r01.zip' -OutFile (Join-Path $env:RUNNER_TEMP 'platform.zip')
+            Expand-Archive (Join-Path $env:RUNNER_TEMP 'platform.zip') -DestinationPath (Join-Path $sdk 'platforms')
+          }
+
+      - name: Build APK
+        shell: pwsh
+        env:
+          JAVAC: "${{ steps.setup-java.outputs.path }}\bin\javac.exe"
+        run: powershell -ExecutionPolicy Bypass -File .\build.ps1
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: YouTubeVot-apk
+          path: out/YouTubeVot.apk
+
+      - name: Create GitHub Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: out/YouTubeVot.apk
+          name: ${{ github.ref_name }}
+          body: |
+            Автосборка: GitHub Actions (Windows runner, тот же ручной пайплайн).
+
+            APK подписан общим debug-ключом (alias `vot`) — ставится поверх
+            предыдущих версий без удаления приложения.
