@@ -70,10 +70,13 @@ if (Test-Path (Join-Path $nativeRoot "Android.mk")) {
     New-Item -ItemType Directory -Force -Path $nativeObj, $nativeLibDir | Out-Null
     Write-Host "[1/8] ndk-build (hev-socks5-tunnel)..." -ForegroundColor Cyan
     & $ndkBuild -C (Join-Path $nativeRoot "hev-socks5-tunnel") `
+        APP_BUILD_SCRIPT=Android.mk NDK_APPLICATION_MK=Application.mk `
         NDK_OUT=$nativeObj NDK_LIBS_OUT=$nativeLibDir APP_ABI="armeabi-v7a arm64-v8a x86 x86_64"
     if ($LASTEXITCODE -ne 0) { throw "hev-socks5-tunnel native build failed" }
     Write-Host "[1/8] ndk-build (byedpi)..." -ForegroundColor Cyan
-    & $ndkBuild -C $nativeRoot NDK_OUT=$nativeObj NDK_LIBS_OUT=$nativeLibDir APP_ABI="armeabi-v7a arm64-v8a x86 x86_64"
+    & $ndkBuild -C $nativeRoot `
+        APP_BUILD_SCRIPT=Android.mk NDK_APPLICATION_MK=Application.mk `
+        NDK_OUT=$nativeObj NDK_LIBS_OUT=$nativeLibDir APP_ABI="armeabi-v7a arm64-v8a x86 x86_64"
     if ($LASTEXITCODE -ne 0) { throw "byedpi native build failed" }
 }
 
