@@ -1,8 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     package="com.vot.youtube"
-    android:versionCode="5"
-    android:versionName="1.2.1">
+    android:versionCode="6"
+    android:versionName="1.3.0">
 
     <uses-sdk
         android:minSdkVersion="24"
@@ -20,7 +20,7 @@
         android:allowBackup="true"
         android:hardwareAccelerated="true"
         android:usesCleartextTraffic="false"
-        android:theme="@android:style/Theme.Material.NoActionBar.Fullscreen">
+        android:theme="@style/Theme.YouTubeVot">
 
         <activity
             android:name=".MainActivity"

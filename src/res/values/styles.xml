@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Базовая тема (API < 31). На API 31+ переопределяется в values-v31/styles.xml -->
+    <style name="Theme.YouTubeVot" parent="@android:style/Theme.Material.NoActionBar.Fullscreen" />
+</resources>

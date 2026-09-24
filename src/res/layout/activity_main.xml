@@ -42,6 +42,7 @@
             android:tint="@color/icon"
             android:clickable="true"
             android:focusable="true"
+            android:background="?android:attr/selectableItemBackgroundBorderless"
             android:alpha="0.35"
             android:contentDescription="@string/nav_back" />
 
@@ -54,6 +55,7 @@
             android:tint="@color/icon"
             android:clickable="true"
             android:focusable="true"
+            android:background="?android:attr/selectableItemBackgroundBorderless"
             android:alpha="0.35"
             android:contentDescription="@string/nav_forward" />
 
@@ -66,6 +68,7 @@
             android:tint="@color/icon"
             android:clickable="true"
             android:focusable="true"
+            android:background="?android:attr/selectableItemBackgroundBorderless"
             android:contentDescription="@string/refresh" />
 
         <ImageView
@@ -77,6 +80,7 @@
             android:tint="@color/icon"
             android:clickable="true"
             android:focusable="true"
+            android:background="?android:attr/selectableItemBackgroundBorderless"
             android:contentDescription="@string/exit" />
     </LinearLayout>
 

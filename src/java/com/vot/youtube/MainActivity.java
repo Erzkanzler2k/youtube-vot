@@ -20,6 +20,7 @@ import android.os.Build;
 import android.os.Bundle;
 import android.os.Environment;
 import android.provider.MediaStore;
+import android.view.HapticFeedbackConstants;
 import android.view.View;
 import android.view.ViewGroup;
 import android.webkit.CookieManager;
@@ -99,6 +100,9 @@ public class MainActivity extends Activity {
         // Тёмный фон вместо белых вспышек при навигации; без цветного свечения краёв
         web.setBackgroundColor(0xFF0F0F0F);
         web.setOverScrollMode(View.OVER_SCROLL_NEVER);
+        // Чистый «апповый» вид: без системных скроллбаров
+        web.setVerticalScrollBarEnabled(false);
+        web.setHorizontalScrollBarEnabled(false);
 
         CookieManager.getInstance().setAcceptThirdPartyCookies(web, true);
 
@@ -107,11 +111,13 @@ public class MainActivity extends Activity {
             public void onPageStarted(WebView view, String url, android.graphics.Bitmap favicon) {
                 injectVot(view);
                 updateNavState();
+                view.setAlpha(0f); // плавное появление вместо резкой смены кадра
             }
 
             @Override
             public void onPageFinished(WebView view, String url) {
                 updateNavState();
+                view.animate().alpha(1f).setDuration(220).start();
             }
 
             @Override
@@ -188,12 +194,14 @@ public class MainActivity extends Activity {
         btnBack.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
+                v.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY);
                 if (web.canGoBack()) web.goBack();
             }
         });
         btnForward.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
+                v.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY);
                 if (web.canGoForward()) web.goForward();
             }
         });
@@ -201,6 +209,7 @@ public class MainActivity extends Activity {
         refresh.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
+                v.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY);
                 web.reload();
             }
         });
@@ -208,6 +217,7 @@ public class MainActivity extends Activity {
         exit.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
+                v.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY);
                 finish();
             }
         });

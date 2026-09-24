@@ -9,4 +9,5 @@
     <color name="accent">#FF4545</color>
     <color name="icon">#FFFFFFFF</color>
     <color name="progress_bg">#33FFFFFF</color>
+    <color name="icon_background">#0F0F0F</color>
 </resources>

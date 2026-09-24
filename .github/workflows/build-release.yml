@@ -52,7 +52,7 @@ jobs:
       - name: Build APK
         shell: pwsh
         env:
-          JAVAC: "${{ steps.setup-java.outputs.path }}\bin\javac.exe"
+          JAVAC: '${{ steps.setup-java.outputs.path }}\bin\javac.exe'
         run: powershell -ExecutionPolicy Bypass -File .\build.ps1
 
       - name: Upload APK artifact
