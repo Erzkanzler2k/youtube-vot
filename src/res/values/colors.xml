@@ -6,7 +6,11 @@
     <color name="surface_variant">#222222</color>
     <color name="divider">#2A2A2A</color>
     <color name="text_primary">#FFFFFFFF</color>
-    <color name="text_secondary">#B3B3B3</color>
+    <color name="text_secondary">#C4C4C4</color>
+    <!-- Заголовки секций: приглушённый тон, чтобы не спорить с заголовками строк -->
+    <color name="text_section">#8F8F8F</color>
+    <!-- Опасные действия (сброс) -->
+    <color name="danger">#FF7A7A</color>
     <color name="icon_inactive">#9AA0A6</color>
     <!-- Фирменный акцент YouTube -->
     <color name="accent">#FF0033</color>

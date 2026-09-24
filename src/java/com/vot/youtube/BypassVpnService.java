@@ -46,6 +46,18 @@ public class BypassVpnService extends VpnService {
 
     private volatile boolean running;
     private BypassEngine engine;
+    /**
+     * Фактическое состояние сервиса в текущем процессе. Нужно UI: преф
+     * PREF_ENABLED хранит только намерение пользователя и может разойтись с
+     * реальностью (сервис убит системой или force-stop), а показывать
+     * «обход включён», когда VPN не поднят, — враньё в интерфейсе.
+     */
+    private static volatile boolean sActive;
+
+    /** Действительно ли VPN сейчас работает (не просто включён в настройках). */
+    public static boolean isActive() {
+        return sActive;
+    }
 
     private void startForegroundCompat() {
         if (Build.VERSION.SDK_INT >= 34) {
@@ -83,6 +95,7 @@ public class BypassVpnService extends VpnService {
             stopForeground(STOP_FOREGROUND_REMOVE);
             stopSelf(startId);
             stopSelf();
+            sActive = false;
             return START_NOT_STICKY;
         }
         if (running) return START_STICKY;
@@ -97,6 +110,7 @@ public class BypassVpnService extends VpnService {
         if (!BypassEngine.isAvailable()) {
             // Движок должен быть доступен всегда (этап 2+); если нет — не поднимаем VPN.
             Log.i(TAG, "engine not ready, refusing to establish VPN");
+            sActive = false;
             setEnabled(false);
             stopSelf();
             return START_NOT_STICKY;
@@ -112,9 +126,11 @@ public class BypassVpnService extends VpnService {
             });
             engine.start();
             running = true;
+            sActive = true;
             setEnabled(true);
         } catch (Exception e) {
             Log.e(TAG, "VPN establish failed", e);
+            sActive = false;
             setEnabled(false);
             stopSelf();
         }
@@ -173,6 +189,7 @@ public class BypassVpnService extends VpnService {
     public void onDestroy() {
         Log.i(TAG, "onDestroy begin");
         running = false;
+        sActive = false;
         if (engine != null) {
             engine.shutdown();
             engine = null;

@@ -39,6 +39,7 @@ import android.os.Bundle;
 import android.os.Environment;
 import android.provider.MediaStore;
 import android.provider.Settings;
+import android.text.TextUtils;
 import android.util.Log;
 import android.view.DisplayCutout;
 import android.view.Gravity;
@@ -131,8 +132,8 @@ public class MainActivity extends Activity {
 
     private WebView web;
     private FrameLayout customViewContainer;
-    private View topBar;
     private View bottomBar;
+    private View dotVpn;
     private View customView;
     private WebChromeClient.CustomViewCallback customViewCallback;
     private ProgressBar progressBar;
@@ -149,8 +150,7 @@ public class MainActivity extends Activity {
     private DownloadManager downloadManager;
     private BroadcastReceiver downloadReceiver;
 
-    // Базовые отступы панелей (без системных инсетов), чтобы корректно дополнять их
-    private int topBarBaseStart, topBarBaseEnd, topBarBaseTop, topBarBaseBottom;
+    // Базовые отступы панели (без системных инсетов), чтобы корректно дополнять их
     private int bottomBarBaseStart, bottomBarBaseEnd, bottomBarBaseTop, bottomBarBaseBottom;
 
     @SuppressLint("SetJavaScriptEnabled")
@@ -165,8 +165,8 @@ public class MainActivity extends Activity {
         setNormalSystemUi();
 
         customViewContainer = findViewById(R.id.custom_view_container);
-        topBar = findViewById(R.id.top_bar);
         bottomBar = findViewById(R.id.bottom_bar);
+        dotVpn = findViewById(R.id.dot_vpn);
         setupSystemBars();
         web = findViewById(R.id.web);
         progressBar = findViewById(R.id.progress);
@@ -294,7 +294,6 @@ public class MainActivity extends Activity {
                                 ViewGroup.LayoutParams.MATCH_PARENT,
                                 ViewGroup.LayoutParams.MATCH_PARENT));
                 web.setVisibility(View.GONE);
-                if (topBar != null) topBar.setVisibility(View.GONE);
                 if (bottomBar != null) bottomBar.setVisibility(View.GONE);
                 setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE);
                 setImmersiveSystemUi();
@@ -307,7 +306,6 @@ public class MainActivity extends Activity {
                 customView = null;
                 customViewContainer.setVisibility(View.GONE);
                 web.setVisibility(View.VISIBLE);
-                if (topBar != null) topBar.setVisibility(View.VISIBLE);
                 if (bottomBar != null) bottomBar.setVisibility(View.VISIBLE);
                 setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_PORTRAIT);
                 setNormalSystemUi();
@@ -348,15 +346,9 @@ public class MainActivity extends Activity {
                 web.reload();
             }
         });
-        ImageView exit = findViewById(R.id.btn_exit);
-        exit.setOnClickListener(new View.OnClickListener() {
-            @Override
-            public void onClick(View v) {
-                pressFeedback(v);
-                finish();
-            }
-        });
-
+        // Кнопки «Выход» больше нет: деструктивное действие стояло в одном ряду
+        // с навигацией и выглядело как обычная кнопка. Приложение закрывается
+        // системным свайпом/кнопкой «Назад» — отдельная иконка не нужна.
         ImageView settings = findViewById(R.id.btn_settings);
         settings.setOnClickListener(new View.OnClickListener() {
             @Override
@@ -365,6 +357,7 @@ public class MainActivity extends Activity {
                 showSettingsDialog();
             }
         });
+        updateBypassIndicator();
 
         String initial = HOME_URL;
         Uri data = getIntent().getData();
@@ -503,13 +496,9 @@ public class MainActivity extends Activity {
 
     /* ---------------- Безопасные зоны (вырез камеры, статус-бар, жесты) ---------------- */
 
-    /** Слушаем системные инсеты и отодвигаем панели от выреза камеры и жестовой зоны. */
+    /** Слушаем системные инсеты и отодвигаем панель от выреза камеры и жестовой зоны. */
     private void setupSystemBars() {
-        if (topBar == null || bottomBar == null) return;
-        topBarBaseStart = topBar.getPaddingStart();
-        topBarBaseEnd = topBar.getPaddingEnd();
-        topBarBaseTop = topBar.getPaddingTop();
-        topBarBaseBottom = topBar.getPaddingBottom();
+        if (bottomBar == null) return;
         bottomBarBaseStart = bottomBar.getPaddingStart();
         bottomBarBaseEnd = bottomBar.getPaddingEnd();
         bottomBarBaseTop = bottomBar.getPaddingTop();
@@ -526,11 +515,12 @@ public class MainActivity extends Activity {
     }
 
     /**
-     * Считает безопасные отступы (статус-бар, навигация, вырез камеры)
-     * и применяет их к панелям: верх — под камеру/статус-бар, низ — над жестами.
+     * Считает безопасные отступы (статус-бар, навигация, вырез камеры).
+     * Верхний отступ идёт корню — верхней панели больше нет, контент должен
+     * начинаться под статус-баром, но не под ним.
      */
     private void applySafeInsets(WindowInsets insets) {
-        if (topBar == null || bottomBar == null) return;
+        if (bottomBar == null) return;
         int left = 0, top = 0, right = 0, bottom = 0;
         if (Build.VERSION.SDK_INT >= 30) {
             Insets si = insets.getInsets(WindowInsets.Type.systemBars());
@@ -553,12 +543,10 @@ public class MainActivity extends Activity {
                 right = Math.max(right, cutout.getSafeInsetRight());
             }
         }
-        topBar.setPaddingRelative(topBarBaseStart + left, topBarBaseTop + top,
-                topBarBaseEnd + right, topBarBaseBottom);
         bottomBar.setPaddingRelative(bottomBarBaseStart + left, bottomBarBaseTop,
                 bottomBarBaseEnd + right, bottomBarBaseBottom + bottom);
         View root = findViewById(R.id.root_container);
-        if (root != null) root.setPadding(left, 0, right, 0);
+        if (root != null) root.setPadding(left, top, right, 0);
     }
 
     /** Обычный режим: статус-бар скрыт, навигационная панель видна (в цвет фона). */
@@ -590,6 +578,28 @@ public class MainActivity extends Activity {
         btnForward.setEnabled(forward);
         btnForward.setAlpha(forward ? 1f : 0.35f);
     }
+
+    /**
+     * Индикатор обхода блокировок: точка у «Настроек» горит, когда VPN поднят.
+     * Показываем фактическое состояние сервиса, а не только преф: сервис мог
+     * быть убит системой, и преф остался в «включено».
+     */
+    private void updateBypassIndicator() {
+        setBypassIndicator(BypassVpnService.isActive());
+    }
+
+    private void setBypassIndicator(boolean on) {
+        if (dotVpn == null) return;
+        dotVpn.setVisibility(on ? View.VISIBLE : View.GONE);
+    }
+
+    /**
+     * НЕ поднимаем убитый сервис автоматически, даже если преф говорит «включено».
+     * Проверено на эмуляторе: VPN, поднятый раньше готовности WebView, ломает
+     * движок — он читает пакеты из TUN, но не отвечает (RX=0, «Нет соединения»).
+     * Поэтому показываем фактическое состояние (isActive()) и просим включить
+     * обход вручную, когда страница уже загружена.
+     */
 
     /** Лёгкая вибрация + микро-пульс иконки при нажатии. */
     private void pressFeedback(final View v) {
@@ -714,8 +724,11 @@ public class MainActivity extends Activity {
 
         LinearLayout content = new LinearLayout(this);
         content.setOrientation(LinearLayout.VERTICAL);
+        content.setPadding(0, dp(8), 0, dp(8));
 
-        // Страна контента
+        // ---- СЕКЦИЯ: Контент ----
+        content.addView(sectionHeader(getString(R.string.settings_section_content)));
+
         LinearLayout rowRegion = settingsRow(R.drawable.ic_globe,
                 getString(R.string.settings_region), regionLabel());
         rowRegion.setOnClickListener(new View.OnClickListener() {
@@ -728,8 +741,10 @@ public class MainActivity extends Activity {
         });
         content.addView(rowRegion);
 
-        // Автообновление
-        LinearLayout rowUpdate = settingsRow(R.drawable.ic_refresh,
+        // ---- СЕКЦИЯ: Обновления ----
+        content.addView(sectionHeader(getString(R.string.settings_section_updates)));
+
+        LinearLayout rowUpdate = settingsRow(R.drawable.ic_cloud_sync,
                 getString(R.string.settings_auto_update),
                 getString(R.string.settings_auto_update_desc));
         rowUpdate.setClickable(false);
@@ -748,8 +763,7 @@ public class MainActivity extends Activity {
         rowUpdate.addView(sw, swLp);
         content.addView(rowUpdate);
 
-        // Проверить обновления сейчас
-        LinearLayout rowCheck = settingsRow(R.drawable.ic_refresh,
+        LinearLayout rowCheck = settingsRow(R.drawable.ic_download,
                 getString(R.string.settings_check_update),
                 getString(R.string.settings_check_update_desc));
         rowCheck.setOnClickListener(new View.OnClickListener() {
@@ -762,16 +776,36 @@ public class MainActivity extends Activity {
         });
         content.addView(rowCheck);
 
-        // Обход блокировок РКН (VPN) — ветка bypass
-        LinearLayout rowBypass = settingsRow(R.drawable.ic_settings,
+        // ---- СЕКЦИЯ: Сеть и обход ----
+        content.addView(sectionHeader(getString(R.string.settings_section_network)));
+
+        LinearLayout rowWorker = settingsRow(R.drawable.ic_translate,
+                getString(R.string.settings_worker), workerSubtitle(prefs));
+        rowWorker.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                pressFeedback(v);
+                if (holder[0] != null) holder[0].dismiss();
+                showWorkerDialog();
+            }
+        });
+        content.addView(rowWorker);
+
+        LinearLayout rowBypass = settingsRow(R.drawable.ic_shield,
                 getString(R.string.settings_bypass),
                 getString(R.string.settings_bypass_desc));
         rowBypass.setClickable(false);
         rowBypass.setFocusable(false);
         final SharedPreferences bypassPrefs =
                 getSharedPreferences(BypassVpnService.PREFS_BYPASS, MODE_PRIVATE);
-        Switch swBypass = new Switch(this);
-        swBypass.setChecked(bypassPrefs.getBoolean(BypassVpnService.PREF_ENABLED, false));
+        // Источник истины — фактическое состояние сервиса, а не преф: преф хранит
+        // намерение пользователя и может остаться «включено», пока сервис мёртв.
+        final boolean bypassOn = BypassVpnService.isActive();
+        final TextView bypassState = setRowState(rowBypass, bypassOn
+                ? getString(R.string.settings_bypass_state_on)
+                : getString(R.string.settings_bypass_state_off));
+        final Switch swBypass = new Switch(this);
+        swBypass.setChecked(bypassOn);
         swBypass.setOnCheckedChangeListener(new CompoundButton.OnCheckedChangeListener() {
             @Override
             public void onCheckedChanged(CompoundButton b, boolean checked) {
@@ -787,6 +821,14 @@ public class MainActivity extends Activity {
                     startService(stop);
                     bypassPrefs.edit().putBoolean(BypassVpnService.PREF_ENABLED, false).apply();
                 }
+                // Строка состояния и индикатор в тулбаре показывают реальный
+                // статус, а не только нажатую кнопку. Показываем точку сразу по
+                // действию пользователя: сервис пишет PREF_ENABLED асинхронно,
+                // и чтение префа сразу дало бы устаревшее «выключено».
+                bypassState.setText(checked
+                        ? getString(R.string.settings_bypass_state_on)
+                        : getString(R.string.settings_bypass_state_off));
+                setBypassIndicator(checked);
             }
         });
         LinearLayout.LayoutParams swBypassLp = new LinearLayout.LayoutParams(
@@ -795,24 +837,11 @@ public class MainActivity extends Activity {
         rowBypass.addView(swBypass, swBypassLp);
         content.addView(rowBypass);
 
-        // Сервер перевода
-        String worker = prefs.getString(PREF_WORKER_URL, "");
-        String workerSub = worker.isEmpty() ? getString(R.string.settings_default_worker) : worker;
-        LinearLayout rowWorker = settingsRow(R.drawable.ic_settings,
-                getString(R.string.settings_worker), workerSub);
-        rowWorker.setOnClickListener(new View.OnClickListener() {
-            @Override
-            public void onClick(View v) {
-                pressFeedback(v);
-                if (holder[0] != null) holder[0].dismiss();
-                showWorkerDialog();
-            }
-        });
-        content.addView(rowWorker);
+        // ---- СЕКЦИЯ: Опасная зона ----
+        content.addView(sectionHeader(getString(R.string.settings_section_danger)));
 
-        // Сброс настроек
-        LinearLayout rowReset = settingsRow(R.drawable.ic_close,
-                getString(R.string.settings_reset), null);
+        LinearLayout rowReset = settingsRow(R.drawable.ic_delete,
+                getString(R.string.settings_reset), null, true);
         rowReset.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
@@ -826,10 +855,58 @@ public class MainActivity extends Activity {
         AlertDialog dialog = new AlertDialog.Builder(this)
                 .setTitle(R.string.settings)
                 .setView(content)
-                .setNegativeButton(android.R.string.cancel, null)
+                .setNegativeButton(R.string.settings_close, null)
                 .create();
         holder[0] = dialog;
         dialog.show();
+        // При закрытии сверяем индикатор с фактическим состоянием (сервис мог
+        // не стартовать, например, если системный VPN не разрешён).
+        dialog.setOnDismissListener(new DialogInterface.OnDismissListener() {
+            @Override
+            public void onDismiss(DialogInterface d) {
+                updateBypassIndicator();
+            }
+        });
+    }
+
+    private String workerSubtitle(SharedPreferences prefs) {
+        String worker = prefs.getString(PREF_WORKER_URL, "");
+        return worker.isEmpty() ? getString(R.string.settings_default_worker) : worker;
+    }
+
+    /** Заголовок секции: мелкий, разреженный, приглушённый — не спорит со строками. */
+    private TextView sectionHeader(String title) {
+        TextView tv = new TextView(this);
+        tv.setText(title);
+        tv.setTextColor(getColor(R.color.text_section));
+        tv.setTextSize(11);
+        tv.setLetterSpacing(0.08f);
+        tv.setPadding(dp(20), dp(20), dp(20), dp(6));
+        return tv;
+    }
+
+    /**
+     * Добавляет строку состояния в колонку текстов строки (child 1: 0 — иконка,
+     * 1 — заголовок с подписью). Раньше текст добавлялся в саму строку и ломал
+     * горизонтальную раскладку: VPN-строка разъезжалась на три колонки.
+     */
+    private TextView setRowState(LinearLayout row, String state) {
+        TextView tv = new TextView(this);
+        tv.setText(state);
+        tv.setTextColor(getColor(R.color.text_secondary));
+        tv.setTextSize(13);
+        tv.setMaxLines(2);
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        lp.topMargin = dp(3);
+        tv.setLayoutParams(lp);
+        View texts = row.getChildAt(1);
+        if (texts instanceof ViewGroup) {
+            ((ViewGroup) texts).addView(tv);
+        } else {
+            row.addView(tv);
+        }
+        return tv;
     }
 
     /* ---------------- Обход блокировок (VPN, ветка bypass) ---------------- */
@@ -881,6 +958,10 @@ public class MainActivity extends Activity {
 
     /** Строка диалога настроек: иконка + заголовок + подпись. */
     private LinearLayout settingsRow(int iconRes, String title, String subtitle) {
+        return settingsRow(iconRes, title, subtitle, false);
+    }
+
+    private LinearLayout settingsRow(int iconRes, String title, String subtitle, boolean danger) {
         LinearLayout row = new LinearLayout(this);
         row.setOrientation(LinearLayout.HORIZONTAL);
         row.setGravity(Gravity.CENTER_VERTICAL);
@@ -892,9 +973,12 @@ public class MainActivity extends Activity {
         getTheme().resolveAttribute(android.R.attr.selectableItemBackground, ripple, true);
         row.setBackgroundResource(ripple.resourceId);
 
+        int tint = danger ? getColor(R.color.danger) : getColor(R.color.icon_inactive);
+        int titleColor = danger ? getColor(R.color.danger) : getColor(R.color.text_primary);
+
         ImageView icon = new ImageView(this);
         icon.setImageResource(iconRes);
-        icon.setColorFilter(0xFF9AA0A6, PorterDuff.Mode.SRC_IN);
+        icon.setColorFilter(tint, PorterDuff.Mode.SRC_IN);
         int iconSize = dp(22);
         LinearLayout.LayoutParams iconLp = new LinearLayout.LayoutParams(iconSize, iconSize);
         iconLp.setMarginEnd(dp(16));
@@ -908,17 +992,21 @@ public class MainActivity extends Activity {
                 ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
         TextView titleView = new TextView(this);
         titleView.setText(title);
-        titleView.setTextColor(getColor(R.color.text_primary));
+        titleView.setTextColor(titleColor);
         titleView.setTextSize(15);
         texts.addView(titleView);
         if (subtitle != null && !subtitle.isEmpty()) {
             TextView subView = new TextView(this);
             subView.setText(subtitle);
             subView.setTextColor(getColor(R.color.text_secondary));
-            subView.setTextSize(12);
-            subView.setSingleLine(true);
+            subView.setTextSize(13);
+            // Раньше стоял singleLine — длинные подписи («Без root, через
+            // системный VPN…») уезжали под тумблер и читались как «ветка b».
+            // Теперь подпись переносится на две строки целиком.
+            subView.setMaxLines(2);
+            subView.setEllipsize(TextUtils.TruncateAt.END);
             LinearLayout.LayoutParams subLp = new LinearLayout.LayoutParams(
-                    ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
             subLp.topMargin = dp(2);
             subView.setLayoutParams(subLp);
             texts.addView(subView);
@@ -1647,6 +1735,7 @@ public class MainActivity extends Activity {
     protected void onResume() {
         super.onResume();
         if (web != null) web.onResume();
+        updateBypassIndicator(); // индикатор отражает фактическое состояние VPN
         checkPendingUpdateDownload();
         checkForUpdate(false); // повторная авто-проверка после возврата в приложение (с временным гейтом)
     }

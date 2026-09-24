@@ -16,6 +16,13 @@
     <string name="region_label_prefix">Контент: </string>
     <string name="region_by_device"> · по устройству</string>
     <string name="settings">Настройки</string>
+    <string name="settings_close">Закрыть</string>
+    <string name="settings_section_content">КОНТЕНТ</string>
+    <string name="settings_section_updates">ОБНОВЛЕНИЯ</string>
+    <string name="settings_section_network">СЕТЬ И ОБХОД</string>
+    <string name="settings_section_danger">ОПАСНАЯ ЗОНА</string>
+    <string name="settings_bypass_state_on">Включён · трафик идёт через обход</string>
+    <string name="settings_bypass_state_off">Выключен · YouTube может быть заблокирован</string>
     <string name="settings_region">Страна контента</string>
     <string name="settings_auto_update">Автообновление</string>
     <string name="settings_auto_update_desc">Проверять новые версии на GitHub</string>
@@ -25,6 +32,8 @@
     <string name="update_no_new">Установлена последняя версия.</string>
     <string name="settings_bypass">Обход блокировок (VPN)</string>
     <string name="settings_bypass_desc">Без root, через системный VPN — ветка bypass</string>
+    <string name="bypass_on_toast">Обход блокировок включён</string>
+    <string name="bypass_off_toast">Обход блокировок выключен</string>
     <string name="bypass_not_ready">Движок обхода не готов (ветка bypass) — включение отменено.</string>
     <string name="bypass_notif_title">YouTube VoT: обход включён</string>
     <string name="bypass_notif_text">Весь трафик идёт через DPI-обход</string>

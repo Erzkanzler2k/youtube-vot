@@ -6,44 +6,9 @@
     android:orientation="vertical"
     android:background="@color/background">
 
-    <!-- Верхняя панель: только бренд (управление — внизу, под палец) -->
-    <LinearLayout
-        android:id="@+id/top_bar"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:orientation="horizontal"
-        android:gravity="center_vertical"
-        android:background="@color/surface"
-        android:paddingStart="12dp"
-        android:paddingTop="8dp"
-        android:paddingBottom="8dp">
-
-        <ImageView
-            android:id="@+id/logo"
-            android:layout_width="22dp"
-            android:layout_height="22dp"
-            android:layout_marginEnd="8dp"
-            android:src="@drawable/ic_brand_logo"
-            android:importantForAccessibility="no" />
-
-        <TextView
-            android:id="@+id/title"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="@string/brand_youtube"
-            android:textColor="@color/text_primary"
-            android:textSize="16sp"
-            android:textStyle="bold"
-            android:layout_marginEnd="3dp" />
-
-        <TextView
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="@string/brand_vot"
-            android:textColor="@color/accent"
-            android:textSize="16sp"
-            android:textStyle="bold" />
-    </LinearLayout>
+    <!-- Верхней панели нет намеренно: контент начинается сразу под статус-баром.
+         В YouTube уже есть своя шапка и нижняя навигация — вторая полоса
+         сверху съедала ~64dp и дублировала бренд. -->
 
     <!-- Тонкий прогресс-бар загрузки -->
     <ProgressBar
@@ -129,31 +94,39 @@
                 android:background="?android:attr/selectableItemBackgroundBorderless"
                 android:contentDescription="@string/refresh" />
 
-            <ImageView
-                android:id="@+id/btn_exit"
+            <FrameLayout
                 android:layout_width="0dp"
                 android:layout_height="46dp"
-                android:layout_weight="1"
-                android:padding="11dp"
-                android:src="@drawable/ic_close"
-                android:tint="@color/icon"
-                android:clickable="true"
-                android:focusable="true"
-                android:background="?android:attr/selectableItemBackgroundBorderless"
-                android:contentDescription="@string/exit" />
+                android:layout_weight="1">
 
-            <ImageView
-                android:id="@+id/btn_settings"
-                android:layout_width="0dp"
-                android:layout_height="46dp"
-                android:layout_weight="1"
-                android:padding="11dp"
-                android:src="@drawable/ic_settings"
-                android:tint="@color/icon"
-                android:clickable="true"
-                android:focusable="true"
-                android:background="?android:attr/selectableItemBackgroundBorderless"
-                android:contentDescription="@string/settings" />
+                <ImageView
+                    android:id="@+id/btn_settings"
+                    android:layout_width="match_parent"
+                    android:layout_height="match_parent"
+                    android:padding="11dp"
+                    android:src="@drawable/ic_settings"
+                    android:tint="@color/icon"
+                    android:clickable="true"
+                    android:focusable="true"
+                    android:background="?android:attr/selectableItemBackgroundBorderless"
+                    android:contentDescription="@string/settings" />
+
+                <!-- Индикатор обхода блокировок: точка у «Настроек» горит,
+                     когда VPN поднят. Статус главной фичи виден всегда.
+                     Позиционируется от центра ячейки (центр = иконка) со
+                     сдвигом вверх-вправо — иначе точка уезжала к краю
+                     широкой ячейки и висела далеко от шестерёнки. -->
+                <View
+                    android:id="@+id/dot_vpn"
+                    android:layout_width="9dp"
+                    android:layout_height="9dp"
+                    android:layout_gravity="center_horizontal|top"
+                    android:layout_marginTop="9dp"
+                    android:translationX="9dp"
+                    android:background="@drawable/dot_vpn_on"
+                    android:visibility="gone"
+                    android:importantForAccessibility="no" />
+            </FrameLayout>
         </LinearLayout>
     </LinearLayout>
 
