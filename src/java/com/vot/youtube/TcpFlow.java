@@ -24,12 +24,20 @@ import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.InetSocketAddress;
 import java.net.Socket;
+import java.util.Random;
+import java.util.TreeSet;
 
 public final class TcpFlow {
     private static final String TAG = "YouTubeVotBypass";
 
     /** Сколько байт первого payload максимум буферизуем в поисках SNI. */
     private static final int SNI_BUFFER_CAP = 4096;
+
+    // zapret-стратегии десинхронизации первого ClientHello (split/disorder)
+    private static final int DESYNC_BASE_DELAY_MS = 7;     // пауза между сегментами
+    private static final int DESYNC_JITTER_MS = 4;         // +/- джиттер
+    private static final long DESYNC_DISORDER_GAP_MS = 2;  // зазор между "переставленными"
+    private static final double DISORDER_PROBABILITY = 0.5;// доля соединений с disorder
 
     // состояние перехвата первого payload
     private static final int SNI_NONE = 0; // порт не 443 - прозрачно
@@ -63,10 +71,10 @@ public final class TcpFlow {
     private int sniState;
     private byte[] pending;
     private int pendingLen;
-    private boolean fragMode;
-    private int fragSniOff;
-    private int fragSniLen;
+    private int[] cuts;       // границы разреза ClientHello (абсолютные в pending)
+    private boolean disorder; // слать сегменты не по порядку (как zapret --disorder)
 
+    private final Random rnd = new Random();
     private long lastActive = System.currentTimeMillis();
 
     public TcpFlow(BypassEngine engine, VpnService vpn,
@@ -280,9 +288,7 @@ public final class TcpFlow {
         BypassProto.Sni sni = BypassProto.parseClientHelloSni(pending, 0, pendingLen);
         if (sni != null) {
             if (BypassProto.matchesBlocked(sni.host, BypassEngine.BLOCKED_SUFFIXES)) {
-                fragMode = true;
-                fragSniOff = sni.nameOff;
-                fragSniLen = sni.nameLen;
+                scheduleDesync(sni.host, sni.nameOff, sni.nameLen);
             }
             sniState = SNI_DONE;
             flushPending();
@@ -298,8 +304,8 @@ public final class TcpFlow {
 
     private void flushPending() {
         if (pendingLen <= 0) return;
-        if (fragMode && pendingLen > 0) {
-            writeFragmented(pending, 0, pendingLen, fragSniOff, fragSniLen);
+        if (cuts != null && pendingLen > 1) {
+            writeDesynced(pending, 0, pendingLen);
         } else {
             writeAll(pending, 0, pendingLen);
         }
@@ -318,21 +324,91 @@ public final class TcpFlow {
         pendingLen += d.length;
     }
 
-    /** Первый ClientHello ломаем на два сегмента внутри имени SNI. */
-    private void writeFragmented(byte[] buf, int off, int len, int sniOff, int sniLen) {
-        int split = sniOff + (sniLen * 3) / 4;
-        if (split < 1) split = 1;
-        if (split >= len) split = len - 1;
-        if (split < 1) {
-            writeAll(buf, off, len);
-            return;
+    /* ---------------- zapret-стратегии десинхронизации ---------------- */
+
+    /**
+     * Готовим план резки первого ClientHello. Разрезы идут ВНУТРИ имени SNI и
+     * ВНУТРИ самого суффикса (youtube.com, googlevideo.com...) — ни один
+     * сегмент не содержит полного имени или полного суффикса. Случайное число
+     * сегментов (4-5), случайный порядок (disorder) и паузы — чтобы DPI не
+     * выучил постоянный паттерн.
+     */
+    private void scheduleDesync(String host, int nameOff, int nameLen) {
+        TreeSet<Integer> p = new TreeSet<Integer>();
+        int n = 3 + rnd.nextInt(2); // 4-5 сегментов
+        for (int i = 1; i < n; i++) {
+            int cut = nameOff + (int) (((long) nameLen * i) / n);
+            if (cut > nameOff && cut < nameOff + nameLen) p.add(cut);
         }
-        writeAll(buf, off, split);
+        // дополнительный разрез внутри самого суффикса
+        String suffix = blockedSuffix(host);
+        if (suffix != null && suffix.length() < nameLen) {
+            int mid = nameOff + nameLen - suffix.length() + suffix.length() / 2;
+            if (mid > nameOff && mid < nameOff + nameLen) p.add(mid);
+        }
+        if (p.isEmpty()) return;
+        int[] arr = new int[p.size()];
+        int i = 0;
+        for (Integer c : p) arr[i++] = c;
+        cuts = arr;
+        disorder = rnd.nextDouble() < DISORDER_PROBABILITY;
+    }
+
+    /** Самый длинный суффикс из списка, которым заканчивается host (или null). */
+    private String blockedSuffix(String host) {
+        String best = null;
+        for (String s : BypassEngine.BLOCKED_SUFFIXES) {
+            if (host.endsWith(s) && (best == null || s.length() > best.length())) {
+                best = s;
+            }
+        }
+        return best;
+    }
+
+    /** Шлём ClientHello сегментами (иногда не по порядку) с паузами между ними. */
+    private void writeDesynced(byte[] buf, int off, int len) {
+        int m = cuts.length + 1;
+        int[] starts = new int[m];
+        int[] ends = new int[m];
+        int prev = off;
+        for (int i = 0; i < cuts.length; i++) {
+            starts[i] = prev;
+            ends[i] = cuts[i];
+            prev = cuts[i];
+        }
+        starts[m - 1] = prev;
+        ends[m - 1] = off + len;
+
+        int[] order = new int[m];
+        for (int i = 0; i < m; i++) order[i] = i;
+        if (disorder) {
+            // перемешиваем все сегменты: сервер пересоберёт, DPI увидит куски
+            for (int i = m - 1; i > 0; i--) {
+                int j = rnd.nextInt(i + 1);
+                int t = order[i];
+                order[i] = order[j];
+                order[j] = t;
+            }
+        }
+        for (int i = 0; i < m; i++) {
+            if (i > 0) {
+                sleepMs(disorder ? DESYNC_DISORDER_GAP_MS : delayMs());
+            }
+            int s = order[i];
+            if (ends[s] > starts[s]) writeAll(buf, starts[s], ends[s] - starts[s]);
+        }
+    }
+
+    private long delayMs() {
+        return DESYNC_BASE_DELAY_MS + (long) rnd.nextInt(DESYNC_JITTER_MS * 2 + 1) - DESYNC_JITTER_MS;
+    }
+
+    private static void sleepMs(long ms) {
+        if (ms <= 0) return;
         try {
-            Thread.sleep(7);
+            Thread.sleep(ms);
         } catch (InterruptedException ignored) {
         }
-        writeAll(buf, off + split, len - split);
     }
 
     private void writeAll(byte[] buf, int off, int len) {
