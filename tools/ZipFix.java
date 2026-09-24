@@ -4,7 +4,9 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.nio.file.Files;
+import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.util.stream.Stream;
 import java.util.zip.CRC32;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
@@ -64,6 +66,26 @@ public class ZipFix {
                 de.setTime(System.currentTimeMillis());
                 zout.putNextEntry(de);
                 zout.write(dex);
+                zout.closeEntry();
+            }
+            if (args.length > 3 && !args[3].isEmpty()) {
+                addNativeLibraries(zout, args[3]);
+            }
+        }
+    }
+
+    private static void addNativeLibraries(ZipOutputStream zout, String nativeDir) throws IOException {
+        Path root = Paths.get(nativeDir);
+        if (!Files.isDirectory(root)) return;
+        try (Stream<Path> paths = Files.walk(root)) {
+            for (Path path : (Iterable<Path>) paths.filter(Files::isRegularFile)
+                    .filter(value -> value.toString().endsWith(".so"))::iterator) {
+                Path relative = root.relativize(path);
+                String entryName = "lib/" + relative.toString().replace('\\', '/');
+                ZipEntry entry = new ZipEntry(entryName);
+                entry.setTime(Files.getLastModifiedTime(path).toMillis());
+                zout.putNextEntry(entry);
+                Files.copy(path, zout);
                 zout.closeEntry();
             }
         }

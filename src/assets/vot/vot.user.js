@@ -25194,8 +25194,7 @@ var vot = (function(exports) {
 			if (!(uiError instanceof VOTLocalizedError)) return;
 			if (uiError.unlocalizedMessage === "VOTYandexTokenExpired") {
 				await deleteAccount(this.videoHandler);
-				openAuthWindow();
-			} else if (uiError.unlocalizedMessage === "VOTAccountRequired") openAuthWindow();
+			}
 		}
 		async translateVideoImpl(videoData, requestLang, responseLang, translationHelp = null, shouldSendFailedAudio = false, signal = NEVER_ABORTED_SIGNAL, options = {}) {
 			const { disableLivelyVoice = false, retryAttempt = 0 } = options;
@@ -31025,7 +31024,6 @@ var vot = (function(exports) {
 	}
 	async function prepareAuthStateForTranslation(videoHandler) {
 		if (!await deleteExpiredAccount(videoHandler)) return;
-		openAuthWindow();
 		throw new VOTLocalizedError("VOTYandexTokenExpired");
 	}
 	async function handleTranslationButtonCommand(deps) {

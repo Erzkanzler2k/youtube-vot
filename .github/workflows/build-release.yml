@@ -6,7 +6,7 @@
 #    * workflow_dispatch (вручную)    -> только сборка (для проверки), без релиза
 #
 #  Раннер: windows-latest. Пайплайн тот же, что и локально (build.ps1):
-#  aapt2 -> javac -> d8 -> ZipFix -> zipalign -> apksigner (общий debug-ключ).
+#  ndk-build -> aapt2 -> javac -> d8 -> ZipFix -> zipalign -> apksigner.
 # ============================================================================
 name: Build APK
 
@@ -25,6 +25,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v5
+        with:
+          submodules: recursive
 
       - name: Set up JDK 17
         id: setup-java
@@ -52,6 +54,21 @@ jobs:
             Invoke-WebRequest -Uri 'https://dl.google.com/android/repository/platform-35_r01.zip' -OutFile (Join-Path $env:RUNNER_TEMP 'platform.zip')
             Expand-Archive (Join-Path $env:RUNNER_TEMP 'platform.zip') -DestinationPath (Join-Path $sdk 'platforms')
           }
+
+      - name: Download Android NDK
+        shell: pwsh
+        run: |
+          $sdk = $env:ANDROID_SDK_ROOT
+          $ndk = Join-Path $sdk 'ndk\27.2.12479018'
+          New-Item -ItemType Directory -Force -Path (Join-Path $sdk 'ndk') | Out-Null
+          if (-not (Test-Path (Join-Path $ndk 'ndk-build.cmd'))) {
+            Invoke-WebRequest -Uri 'https://dl.google.com/android/repository/android-ndk-r27c-windows.zip' -OutFile (Join-Path $env:RUNNER_TEMP 'android-ndk.zip')
+            Expand-Archive (Join-Path $env:RUNNER_TEMP 'android-ndk.zip') -DestinationPath (Join-Path $sdk 'ndk')
+            if (Test-Path (Join-Path $sdk 'ndk\android-ndk-r27c')) {
+              Rename-Item (Join-Path $sdk 'ndk\android-ndk-r27c') '27.2.12479018'
+            }
+          }
+          "ANDROID_NDK_ROOT=$ndk" | Out-File -Append -Encoding ascii $env:GITHUB_ENV
 
       - name: Build APK
         shell: pwsh

@@ -1,0 +1,6 @@
+[submodule "src/cpp/byedpi"]
+	path = src/cpp/byedpi
+	url = https://github.com/hufrea/byedpi.git
+[submodule "src/cpp/hev-socks5-tunnel"]
+	path = src/cpp/hev-socks5-tunnel
+	url = https://github.com/heiher/hev-socks5-tunnel.git

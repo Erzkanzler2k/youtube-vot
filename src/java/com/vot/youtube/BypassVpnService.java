@@ -1,29 +1,10 @@
-/*
- * BypassVpnService — обход блокировок РКН без root (ветка bypass).
- *
- * Делает через системный Android VpnService: приложение получает разрешение
- * пользователя (системный диалог), поднимает виртуальный сетевой интерфейс
- * TUN и перехватывает трафик. DPI-обход (аналог zapret/ByeDPI) выполняет
- * BypassEngine поверх TUN.
- *
- * Статус (этап 2): движок реализован и доступен (BypassEngine.isAvailable()
- * возвращает true). В TUN попадает ТОЛЬКО трафик нашего приложения и
- * WebView-провайдеров (all-disallow + allowlist) — остальные приложения
- * работают как раньше, мимо VPN. Если движок падает — сервис сам
- * останавливается и VPN снимается, интернет остаётся живым.
- *
- * Без AndroidX: только платформенные API. Java 8-совместимый код.
- */
 package com.vot.youtube;
 
 import android.app.Notification;
 import android.app.NotificationChannel;
 import android.app.NotificationManager;
 import android.app.PendingIntent;
-import android.app.Service;
 import android.content.Intent;
-import android.content.pm.ApplicationInfo;
-import android.content.pm.PackageManager;
 import android.content.pm.ServiceInfo;
 import android.net.VpnService;
 import android.os.Build;
@@ -31,8 +12,12 @@ import android.os.IBinder;
 import android.os.ParcelFileDescriptor;
 import android.util.Log;
 
-import java.io.IOException;
-import java.util.List;
+import java.io.File;
+import java.io.FileOutputStream;
+import java.io.OutputStreamWriter;
+import java.io.PrintWriter;
+
+import hev.sockstun.TProxyService;
 
 public class BypassVpnService extends VpnService {
     private static final String TAG = "YouTubeVotBypass";
@@ -43,34 +28,31 @@ public class BypassVpnService extends VpnService {
     public static final String PREF_ENABLED = "bypass_enabled";
     public static final int NOTIF_ID = 42;
     private static final String CHANNEL_ID = "bypass";
+    private static final int PROXY_PORT = 1080;
+    private static final String[] BYPASS_HOSTS = {
+            "youtube.com", "googlevideo.com", "ytimg.com", "ggpht.com",
+            "googleusercontent.com", "gstatic.com", "googleapis.com",
+            "googlesyndication.com", "doubleclick.net", "google.com", "google.ru"
+    };
+    private static final String[] ALLOWED_PKGS = {
+            "com.google.android.webview",
+            "com.android.webview",
+            "com.google.android.trichromelibrary"
+    };
 
-    private volatile boolean running;
-    private BypassEngine engine;
-    /**
-     * Фактическое состояние сервиса в текущем процессе. Нужно UI: преф
-     * PREF_ENABLED хранит только намерение пользователя и может разойтись с
-     * реальностью (сервис убит системой или force-stop), а показывать
-     * «обход включён», когда VPN не поднят, — враньё в интерфейсе.
-     */
     private static volatile boolean sActive;
+    private volatile boolean running;
+    private ParcelFileDescriptor tun;
+    private File tunnelConfig;
+    private int proxyFd = -1;
+    private Thread proxyThread;
 
-    /** Действительно ли VPN сейчас работает (не просто включён в настройках). */
     public static boolean isActive() {
         return sActive;
     }
 
-    private void startForegroundCompat() {
-        if (Build.VERSION.SDK_INT >= 34) {
-            startForeground(NOTIF_ID, buildNotification(),
-                    ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE);
-        } else {
-            startForeground(NOTIF_ID, buildNotification());
-        }
-    }
-
-    /** Готов ли движок реально перехватывать трафик (этап 2+). */
     public static boolean isReady() {
-        return BypassEngine.isAvailable();
+        return ByeDpiNative.isAvailable() && TProxyService.isAvailable();
     }
 
     @Override
@@ -82,121 +64,166 @@ public class BypassVpnService extends VpnService {
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
         if (intent != null && ACTION_STOP.equals(intent.getAction())) {
-            // Снимаем VPN СИНХРОННО, не дожидаясь onDestroy: на эмуляторе/ряде
-            // систем после прихода stop-команды AMS может не довести сервис до
-            // onDestroy (startRequested=false), и без прямого shutdown() здесь
-            // tun0 остался бы висеть. shutdown() идемпотентен и закрывает TUN
-            // (fd) — система снимает VPN-сеть сразу при закрытии fd.
-            Log.i(TAG, "stop cmd id=" + startId);
-            running = false;
-            if (engine != null) {
-                engine.shutdown();
-            }
+            stopTunnel();
             stopForeground(STOP_FOREGROUND_REMOVE);
             stopSelf(startId);
-            stopSelf();
-            sActive = false;
             return START_NOT_STICKY;
         }
         if (running) return START_STICKY;
-        Log.i(TAG, "start cmd id=" + startId);
-
-        // С API 26 сервис, запущенный через startForegroundService, обязан
-        // вызвать startForeground в течение 5 секунд — делаем это сразу.
-        // С API 34 (targetSdk 34+) обязателен тип FGS; для VPN-сервиса это
-        // specialUse (объявлен в манифесте). Без типа — MissingForegroundServiceTypeException.
         startForegroundCompat();
-
-        if (!BypassEngine.isAvailable()) {
-            // Движок должен быть доступен всегда (этап 2+); если нет — не поднимаем VPN.
-            Log.i(TAG, "engine not ready, refusing to establish VPN");
+        if (!isReady()) {
             sActive = false;
             setEnabled(false);
             stopSelf();
             return START_NOT_STICKY;
         }
-
         try {
-            ParcelFileDescriptor tun = establishTun();
-            engine = new BypassEngine(tun, this, new Runnable() {
-                @Override
-                public void run() {
-                    stopSelf();
-                }
-            });
-            engine.start();
+            tun = establishTun();
+            startProxy();
+            startTunnel();
             running = true;
             sActive = true;
             setEnabled(true);
-        } catch (Exception e) {
-            Log.e(TAG, "VPN establish failed", e);
+        } catch (Exception error) {
+            Log.e(TAG, "VPN start failed", error);
+            stopTunnel();
             sActive = false;
             setEnabled(false);
             stopSelf();
+            return START_NOT_STICKY;
         }
         return START_STICKY;
     }
 
-    /** Пакеты, чей трафик разрешён в VPN (наше приложение + WebView-провайдеры). */
-    private static final String[] ALLOWED_PKGS = {
-            "com.vot.youtube",
-            "com.google.android.webview",
-            "com.android.webview",
-            "com.google.android.trichromelibrary"
-    };
-
-    /** Создаёт TUN-интерфейс и перехватывает весь трафик устройства. */
-    private ParcelFileDescriptor establishTun() throws Exception {
-        Builder b = new Builder();
-        b.setSession(getString(R.string.bypass_notif_title));
-        b.addAddress("10.9.0.2", 24);
-        b.addRoute("0.0.0.0", 0);
-        b.addDnsServer("77.88.8.8");
-        b.addDnsServer("77.88.8.1");
-        // Явный MTU: наш mini-TCP анонсирует клиенту MSS 1400 — пакеты всегда
-        // укладываются в 1500, фрагментация по пути в TUN не нужна.
-        b.setMtu(1500);
-        denyOtherApps(b);
-        b.setBlocking(true);
-        ParcelFileDescriptor tun = b.establish();
-        if (tun == null) throw new IllegalStateException("establish() returned null");
-        return tun;
+    private ParcelFileDescriptor establishTun() {
+        Builder builder = new Builder();
+        builder.setSession(getString(R.string.bypass_notif_title));
+        builder.addAddress("10.9.0.2", 24);
+        builder.addRoute("0.0.0.0", 0);
+        builder.addDnsServer("1.1.1.1");
+        builder.setMtu(1500);
+        allowWebViewApps(builder);
+        builder.setBlocking(true);
+        ParcelFileDescriptor descriptor = builder.establish();
+        if (descriptor == null) throw new IllegalStateException("VPN establish returned null");
+        return descriptor;
     }
 
-    /** Пропускает через VPN только наше приложение и WebView-провайдеров;
-     *  остальные приложения работают мимо VPN — интернет не ломаем. */
-    private void denyOtherApps(Builder b) {
-        PackageManager pm = getPackageManager();
-        List<ApplicationInfo> apps = pm.getInstalledApplications(0);
-        for (ApplicationInfo ai : apps) {
-            if (isAllowedPkg(ai.packageName)) continue;
+    private void allowWebViewApps(Builder builder) {
+        boolean added = false;
+        for (String packageName : ALLOWED_PKGS) {
             try {
-                b.addDisallowedApplication(ai.packageName);
+                builder.addAllowedApplication(packageName);
+                added = true;
             } catch (Exception ignored) {
-                // невалидный пакет — пропускаем
             }
         }
+        if (!added) throw new IllegalStateException("No WebView provider package available");
     }
 
-    private boolean isAllowedPkg(String pkg) {
-        for (String a : ALLOWED_PKGS) {
-            if (a.equals(pkg)) return true;
+    private void startProxy() {
+        StringBuilder hosts = new StringBuilder();
+        for (String host : BYPASS_HOSTS) {
+            if (hosts.length() > 0) hosts.append('\n');
+            hosts.append(host);
         }
-        return false;
+        String[] args = {
+                "byedpi",
+                "--ip", "127.0.0.1",
+                "--port", String.valueOf(PROXY_PORT),
+                "--hosts", ":" + hosts,
+                "--auto=torst",
+                "--timeout", "3",
+                "--split", "0+sm",
+                "--tlsrec", "0+sm"
+        };
+        proxyFd = ByeDpiNative.createSocketWithCommandLine(args);
+        if (proxyFd < 0) throw new IllegalStateException("ByeDPI proxy socket failed");
+        final int fd = proxyFd;
+        proxyThread = new Thread(new Runnable() {
+            @Override
+            public void run() {
+                int result = ByeDpiNative.startProxy(fd);
+                if (result != 0 && running) {
+                    Log.e(TAG, "ByeDPI proxy stopped with code " + result);
+                    stopSelf();
+                }
+            }
+        }, "byedpi-proxy");
+        proxyThread.setDaemon(true);
+        proxyThread.start();
+    }
+
+    private void startTunnel() throws Exception {
+        tunnelConfig = new File(getCacheDir(), "hev-socks5-tunnel.yml");
+        PrintWriter writer = new PrintWriter(new OutputStreamWriter(
+                new FileOutputStream(tunnelConfig), "UTF-8"));
+        writer.print("tunnel:\n");
+        writer.print("  name: tun0\n");
+        writer.print("  mtu: 1500\n");
+        writer.print("  ipv4: 10.9.0.2\n");
+        writer.print("  icmp: 'off'\n");
+        writer.print("socks5:\n");
+        writer.print("  mtu: 1500\n");
+        writer.print("  address: 127.0.0.1\n");
+        writer.print("  port: " + PROXY_PORT + "\n");
+        writer.print("  udp: 'udp'\n");
+        writer.print("misc:\n");
+        writer.print("  task-stack-size: 81920\n");
+        writer.close();
+        if (!TProxyService.TProxyStartService(tunnelConfig.getAbsolutePath(), tun.getFd())) {
+            throw new IllegalStateException("tun2socks start failed");
+        }
+    }
+
+    private void stopTunnel() {
+        running = false;
+        if (TProxyService.isAvailable()) {
+            try {
+                TProxyService.TProxyStopService();
+            } catch (Throwable ignored) {
+            }
+        }
+        if (proxyFd >= 0 && ByeDpiNative.isAvailable()) {
+            try {
+                ByeDpiNative.stopProxy(proxyFd);
+            } catch (Throwable ignored) {
+            }
+            proxyFd = -1;
+        }
+        if (proxyThread != null) {
+            try {
+                proxyThread.join(1000);
+            } catch (InterruptedException interrupted) {
+                Thread.currentThread().interrupt();
+            }
+            proxyThread = null;
+        }
+        if (tun != null) {
+            try {
+                tun.close();
+            } catch (Exception ignored) {
+            }
+            tun = null;
+        }
+        if (tunnelConfig != null) {
+            tunnelConfig.delete();
+            tunnelConfig = null;
+        }
+        sActive = false;
+        setEnabled(false);
+    }
+
+    @Override
+    public void onRevoke() {
+        stopTunnel();
+        super.onRevoke();
     }
 
     @Override
     public void onDestroy() {
-        Log.i(TAG, "onDestroy begin");
-        running = false;
-        sActive = false;
-        if (engine != null) {
-            engine.shutdown();
-            engine = null;
-        }
-        setEnabled(false);
+        stopTunnel();
         super.onDestroy();
-        Log.i(TAG, "onDestroy done");
     }
 
     @Override
@@ -204,33 +231,41 @@ public class BypassVpnService extends VpnService {
         return null;
     }
 
-    private void setEnabled(boolean on) {
+    private void startForegroundCompat() {
+        if (Build.VERSION.SDK_INT >= 34) {
+            startForeground(NOTIF_ID, buildNotification(),
+                    ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE);
+        } else {
+            startForeground(NOTIF_ID, buildNotification());
+        }
+    }
+
+    private void setEnabled(boolean enabled) {
         getSharedPreferences(PREFS_BYPASS, MODE_PRIVATE)
-                .edit().putBoolean(PREF_ENABLED, on).apply();
+                .edit().putBoolean(PREF_ENABLED, enabled).apply();
     }
 
     private void createChannel() {
         if (Build.VERSION.SDK_INT >= 26) {
-            NotificationChannel ch = new NotificationChannel(
-                    CHANNEL_ID,
-                    getString(R.string.bypass_notif_title),
+            NotificationChannel channel = new NotificationChannel(
+                    CHANNEL_ID, getString(R.string.bypass_notif_title),
                     NotificationManager.IMPORTANCE_LOW);
-            NotificationManager nm = getSystemService(NotificationManager.class);
-            if (nm != null) nm.createNotificationChannel(ch);
+            NotificationManager manager = getSystemService(NotificationManager.class);
+            if (manager != null) manager.createNotificationChannel(channel);
         }
     }
 
     private Notification buildNotification() {
         Intent intent = new Intent(this, MainActivity.class);
-        PendingIntent pi = PendingIntent.getActivity(this, 0, intent,
+        PendingIntent pendingIntent = PendingIntent.getActivity(this, 0, intent,
                 PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
-        Notification.Builder b = Build.VERSION.SDK_INT >= 26
+        Notification.Builder builder = Build.VERSION.SDK_INT >= 26
                 ? new Notification.Builder(this, CHANNEL_ID)
                 : new Notification.Builder(this);
-        return b.setContentTitle(getString(R.string.bypass_notif_title))
+        return builder.setContentTitle(getString(R.string.bypass_notif_title))
                 .setContentText(getString(R.string.bypass_notif_text))
-                .setSmallIcon(R.drawable.ic_settings)
-                .setContentIntent(pi)
+                .setSmallIcon(R.drawable.ic_shield)
+                .setContentIntent(pendingIntent)
                 .setOngoing(true)
                 .build();
     }

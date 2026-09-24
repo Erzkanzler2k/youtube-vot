@@ -1,8 +1,8 @@
 # ============================================================================
 #  build.ps1 - build YouTube VoT APK manually (no Android Studio / Gradle).
 #
-#  Pipeline: aapt2 (resources) -> javac (Java 8) -> d8 (dex) -> zipalign
-#            -> apksigner (debug key signing).
+#  Pipeline: native NDK (bypass) -> aapt2 (resources) -> javac (Java 8) -> d8
+#            -> ZipFix -> zipalign -> apksigner.
 #
 #  Requirements:
 #    * Java 8+ (JDK 11+ recommended: d8/apksigner need Java 11)
@@ -10,6 +10,7 @@
 #        - $env:ANDROID_SDK_ROOT
 #        - C:\Temp\opencode\android-sdk   (as set up on the build machine)
 #      SDK layout: build-tools\34.0.0\ and platforms\android-35\
+#    * Android NDK when src\cpp exists: ANDROID_NDK_ROOT or SDK\ndk\<version>
 #
 #  Output: .\out\YouTubeVot.apk  (signed, ready to install)
 # ============================================================================
@@ -43,17 +44,46 @@ $bt    = Join-Path $sdk "build-tools\34.0.0"
 $plat  = Join-Path $sdk "platforms\android-35"
 $out   = Join-Path $root "out"
 $build = Join-Path $root "build"
+$nativeLibDir = $null
 
 foreach ($p in @($bt, $plat)) { if (-not (Test-Path $p)) { throw "SDK dir missing: $p" } }
 New-Item -ItemType Directory -Force -Path $out, $build | Out-Null
 
+# --- Native bypass libraries -------------------------------------------------
+$nativeRoot = Join-Path $root "src\cpp"
+if (Test-Path (Join-Path $nativeRoot "Android.mk")) {
+    $ndk = $env:ANDROID_NDK_ROOT
+    if (-not $ndk) { $ndk = $env:ANDROID_NDK_HOME }
+    if (-not $ndk) {
+        $ndkRoot = Join-Path $sdk "ndk"
+        if (Test-Path $ndkRoot) {
+            $found = Get-ChildItem $ndkRoot -Directory | Sort-Object Name -Descending | Select-Object -First 1
+            if ($found) { $ndk = $found.FullName }
+        }
+    }
+    $ndkBuild = if ($ndk) { Join-Path $ndk "ndk-build.cmd" } else { "" }
+    if (-not $ndk -or -not (Test-Path $ndkBuild)) {
+        throw "Android NDK not found. Set ANDROID_NDK_ROOT or install an NDK under $sdk\ndk"
+    }
+    $nativeObj = Join-Path $build "native-obj"
+    $nativeLibDir = Join-Path $build "native-libs"
+    New-Item -ItemType Directory -Force -Path $nativeObj, $nativeLibDir | Out-Null
+    Write-Host "[1/8] ndk-build (hev-socks5-tunnel)..." -ForegroundColor Cyan
+    & $ndkBuild -C (Join-Path $nativeRoot "hev-socks5-tunnel") `
+        NDK_OUT=$nativeObj NDK_LIBS_OUT=$nativeLibDir APP_ABI="armeabi-v7a arm64-v8a x86 x86_64"
+    if ($LASTEXITCODE -ne 0) { throw "hev-socks5-tunnel native build failed" }
+    Write-Host "[1/8] ndk-build (byedpi)..." -ForegroundColor Cyan
+    & $ndkBuild -C $nativeRoot NDK_OUT=$nativeObj NDK_LIBS_OUT=$nativeLibDir APP_ABI="armeabi-v7a arm64-v8a x86 x86_64"
+    if ($LASTEXITCODE -ne 0) { throw "byedpi native build failed" }
+}
+
 # --- 1. Compile resources ---------------------------------------------------
-Write-Host "[1/7] aapt2 compile (resources)..." -ForegroundColor Cyan
+Write-Host "[2/8] aapt2 compile (resources)..." -ForegroundColor Cyan
 & "$bt\aapt2.exe" compile --dir (Join-Path $root "src\res") -o (Join-Path $build "res.zip")
 if ($LASTEXITCODE -ne 0) { throw "aapt2 compile failed" }
 
 # --- 2. Link (manifest, assets, R.java, resources.arsc) ---------------------
-Write-Host "[2/7] aapt2 link (manifest + assets + R.java)..." -ForegroundColor Cyan
+Write-Host "[3/8] aapt2 link (manifest + assets + R.java)..." -ForegroundColor Cyan
 & "$bt\aapt2.exe" link `
     -o (Join-Path $build "base.apk") `
     -I (Join-Path $plat "android.jar") `
@@ -66,7 +96,7 @@ Write-Host "[2/7] aapt2 link (manifest + assets + R.java)..." -ForegroundColor C
 if ($LASTEXITCODE -ne 0) { throw "aapt2 link failed" }
 
 # --- 3. Compile Java --------------------------------------------------------
-Write-Host "[3/7] javac (MainActivity + R)..." -ForegroundColor Cyan
+Write-Host "[4/8] javac (MainActivity + R)..." -ForegroundColor Cyan
 $srcs = @()
 $srcs += Get-ChildItem -Recurse (Join-Path $build "gen") -Filter *.java | ForEach-Object { $_.FullName }
 $srcs += Get-ChildItem -Recurse (Join-Path $root "src\java") -Filter *.java | ForEach-Object { $_.FullName }
@@ -78,18 +108,15 @@ New-Item -ItemType Directory -Force -Path $classesDir | Out-Null
 if ($LASTEXITCODE -ne 0) { throw "javac failed" }
 
 # --- 4. Dex -----------------------------------------------------------------
-Write-Host "[4/7] d8 (classes -> classes.dex)..." -ForegroundColor Cyan
+Write-Host "[5/8] d8 (classes -> classes.dex)..." -ForegroundColor Cyan
 $dexDir = Join-Path $build "dex"
 New-Item -ItemType Directory -Force -Path $dexDir | Out-Null
 $classFiles = Get-ChildItem -Recurse $classesDir -Filter *.class | ForEach-Object { $_.FullName }
 & "$bt\d8.bat" --release --lib (Join-Path $plat "android.jar") --output $dexDir @classFiles
 if ($LASTEXITCODE -ne 0) { throw "d8 failed" }
 
-# --- 5. Pack classes.dex + normalize entry names (ZipFix, Java) -------------
-#   aapt2 на Windows пишет ассеты как "assets/vot\bootstrap.js"; Android
-#   может отклонить APK с такими именами при установке. ZipFix переписывает
-#   все entry с '/' и дописывает classes.dex стандартным способом.
-Write-Host "[5/7] pack classes.dex + normalize zip names..." -ForegroundColor Cyan
+# --- 5. Pack classes.dex, native libraries, and normalized ZIP names ---------
+Write-Host "[6/8] pack classes.dex + native libraries + normalize zip names..." -ForegroundColor Cyan
 $unsigned = Join-Path $build "app-unsigned.apk"
 $zipfixClass = Join-Path $build "ZipFix.class"
 if (-not (Test-Path $zipfixClass)) {
@@ -97,17 +124,19 @@ if (-not (Test-Path $zipfixClass)) {
     if ($LASTEXITCODE -ne 0) { throw "ZipFix compile failed" }
 }
 $java = Join-Path $jdkBin "java.exe"
-& $java -cp $build ZipFix (Join-Path $build "base.apk") (Join-Path $dexDir "classes.dex") $unsigned
+$zipArgs = @((Join-Path $build "base.apk"), (Join-Path $dexDir "classes.dex"), $unsigned)
+if ($nativeLibDir) { $zipArgs += $nativeLibDir }
+& $java -cp $build ZipFix @zipArgs
 if ($LASTEXITCODE -ne 0) { throw "ZipFix failed" }
 
 # --- 6. Align ---------------------------------------------------------------
-Write-Host "[6/7] zipalign..." -ForegroundColor Cyan
+Write-Host "[7/8] zipalign..." -ForegroundColor Cyan
 $aligned = Join-Path $build "aligned.apk"
 & "$bt\zipalign.exe" -f 4 $unsigned $aligned
 if ($LASTEXITCODE -ne 0) { throw "zipalign failed" }
 
 # --- 7. Sign -----------------------------------------------------------------
-Write-Host "[7/7] apksigner (debug key, v1+v2+v3)..." -ForegroundColor Cyan
+Write-Host "[8/8] apksigner (debug key, v1+v2+v3)..." -ForegroundColor Cyan
 $ks  = Join-Path $root "debug.keystore"
 $final = Join-Path $out "YouTubeVot.apk"
 if (-not (Test-Path $ks)) {
