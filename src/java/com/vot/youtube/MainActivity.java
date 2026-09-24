@@ -95,6 +95,11 @@ public class MainActivity extends Activity {
     private static final String PREF_PENDING_TAG = "pending_update_tag";
     private static final String PREF_AUTO_UPDATE = "auto_update";
     private static final String PREF_WORKER_URL = "worker_url";
+    // Метки времени последней успешной проверки и последней попытки (для ретраев без спама API)
+    private static final String PREF_LAST_CHECK = "last_update_check";
+    private static final String PREF_LAST_ATTEMPT = "last_update_attempt";
+    private static final long UPDATE_CHECK_INTERVAL = 60 * 60 * 1000L;  // авто-проверка не чаще 1 раза в час
+    private static final long UPDATE_RETRY_INTERVAL = 10 * 60 * 1000L;  // повтор при сбое не чаще 1 раза в 10 минут
 
     private WebView web;
     private FrameLayout customViewContainer;
@@ -108,7 +113,7 @@ public class MainActivity extends Activity {
     private ObjectAnimator splashPulse;
     private View offlineOverlay;
     private ConnectivityManager.NetworkCallback netCallback;
-    private boolean updateChecked;
+    private boolean updateCheckRunning;
     private long currentDownloadId = -1L;
     private File downloadedApkFile;
     private DownloadManager downloadManager;
@@ -698,6 +703,20 @@ public class MainActivity extends Activity {
         rowUpdate.addView(sw, swLp);
         content.addView(rowUpdate);
 
+        // Проверить обновления сейчас
+        LinearLayout rowCheck = settingsRow(R.drawable.ic_refresh,
+                getString(R.string.settings_check_update),
+                getString(R.string.settings_check_update_desc));
+        rowCheck.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                pressFeedback(v);
+                if (holder[0] != null) holder[0].dismiss();
+                checkForUpdate(true);
+            }
+        });
+        content.addView(rowCheck);
+
         // Сервер перевода
         String worker = prefs.getString(PREF_WORKER_URL, "");
         String workerSub = worker.isEmpty() ? getString(R.string.settings_default_worker) : worker;
@@ -924,15 +943,33 @@ public class MainActivity extends Activity {
 
     /* ---------------- Автообновление с GitHub ---------------- */
 
-    private void checkForUpdate() {
-        if (updateChecked || web == null) return;
-        updateChecked = true;
-        if (!regionPrefs().getBoolean(PREF_AUTO_UPDATE, true)) return;
-        new CheckUpdateTask().execute();
+    private void checkForUpdate(boolean manual) {
+        if (web == null || isFinishing() || isDestroyed()) return;
+        if (updateCheckRunning) return;
+        SharedPreferences prefs = regionPrefs();
+        // Ручная проверка из настроек игнорирует и автообновление, и временные гейты
+        if (!manual && !prefs.getBoolean(PREF_AUTO_UPDATE, true)) return;
+        long now = System.currentTimeMillis();
+        if (!manual) {
+            long lastCheck = prefs.getLong(PREF_LAST_CHECK, 0L);
+            long lastAttempt = prefs.getLong(PREF_LAST_ATTEMPT, 0L);
+            if (now - lastCheck < UPDATE_CHECK_INTERVAL) return;   // недавно уже получили ответ от GitHub
+            if (now - lastAttempt < UPDATE_RETRY_INTERVAL) return; // недавно пытались и словили сбой — не спамим API
+        }
+        prefs.edit().putLong(PREF_LAST_ATTEMPT, now).apply();
+        updateCheckRunning = true;
+        new CheckUpdateTask(manual).execute();
     }
 
     /** Спрашиваем GitHub, какая версия сейчас в релизах. */
     private class CheckUpdateTask extends AsyncTask<Void, Void, String[]> {
+        private final boolean manual;
+        private boolean succeeded; // true только если GitHub ответил 200 и JSON разобран
+
+        CheckUpdateTask(boolean manual) {
+            this.manual = manual;
+        }
+
         @Override
         protected String[] doInBackground(Void... ignore) {
             HttpURLConnection conn = null;
@@ -945,6 +982,7 @@ public class MainActivity extends Activity {
                 conn.setRequestProperty("User-Agent", "YouTubeVot");
                 conn.setRequestProperty("Accept", "application/vnd.github+json");
                 if (conn.getResponseCode() != HttpURLConnection.HTTP_OK) return null;
+                succeeded = true;
                 in = conn.getInputStream();
                 JSONObject root = new JSONObject(readAll(in));
                 String tag = root.optString("tag_name", "");
@@ -974,12 +1012,33 @@ public class MainActivity extends Activity {
 
         @Override
         protected void onPostExecute(String[] result) {
-            if (result == null || isFinishing() || isDestroyed()) return;
+            updateCheckRunning = false;
+            if (isFinishing() || isDestroyed()) return;
+            SharedPreferences prefs = regionPrefs();
+            if (!succeeded) {
+                // Сбой (нет сети, таймаут, rate-limit GitHub): не ставим метку «проверено» —
+                // при следующем старте/возврате в приложение попробуем снова.
+                if (manual) {
+                    Toast.makeText(MainActivity.this, R.string.update_check_fail, Toast.LENGTH_LONG).show();
+                }
+                return;
+            }
+            prefs.edit().putLong(PREF_LAST_CHECK, System.currentTimeMillis()).apply();
+            if (result == null) {
+                if (manual) {
+                    Toast.makeText(MainActivity.this, R.string.update_no_new, Toast.LENGTH_SHORT).show();
+                }
+                return;
+            }
             String tag = result[0];
             String url = result[1];
-            SharedPreferences prefs = regionPrefs();
             if (tag.equals(prefs.getString(PREF_SKIP_UPDATE, ""))) return;
-            if (!isNewerVersion(tag)) return;
+            if (!isNewerVersion(tag)) {
+                if (manual) {
+                    Toast.makeText(MainActivity.this, R.string.update_no_new, Toast.LENGTH_SHORT).show();
+                }
+                return;
+            }
             showUpdateDialog(tag, url);
         }
     }
@@ -1222,7 +1281,7 @@ public class MainActivity extends Activity {
     /** Плавное исчезновение сплэша после первой загрузки страницы. */
     private void hideSplash() {
         if (splashOverlay == null || splashOverlay.getVisibility() != View.VISIBLE) return;
-        checkForUpdate(); // один раз, после первой загрузки
+        checkForUpdate(false); // авто-проверка, один раз после первой загрузки (повтор — в onResume)
         if (splashPulse != null) {
             splashPulse.cancel();
             splashPulse = null;
@@ -1258,6 +1317,7 @@ public class MainActivity extends Activity {
         super.onResume();
         if (web != null) web.onResume();
         checkPendingUpdateDownload();
+        checkForUpdate(false); // повторная авто-проверка после возврата в приложение (с временным гейтом)
     }
 
     @Override
