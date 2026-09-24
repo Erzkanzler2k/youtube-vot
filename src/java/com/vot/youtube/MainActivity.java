@@ -95,10 +95,11 @@ public class MainActivity extends Activity {
             "https://github.com/Erzkanzler2k/youtube-vot/releases/latest";
     private static final String JSDELIVR_MANIFEST =
             "https://cdn.jsdelivr.net/gh/Erzkanzler2k/youtube-vot@latest/release-manifest.json";
-    // Свежий API резолва @latest (в отличие от CDN-кэша @latest, который может
-    // держать старый контент до ~12 ч после релиза) — для точной пин-версии.
+    // Свежий API резолва последней версии. Кэш data.jsdelivr.com на этом URL
+    // может держать старый тег до 12 ч после релиза, поэтому запрос идёт с
+    // cache-buster (?cb=<время>) — иначе пользователь не увидит обновление.
     private static final String JSDELIVR_RESOLVED =
-            "https://data.jsdelivr.com/v1/packages/gh/Erzkanzler2k/youtube-vot/resolved";
+            "https://data.jsdelivr.com/v1/packages/gh/Erzkanzler2k/youtube-vot/resolved?cb=";
     private static final String RELEASE_TAG_MARKER = "/releases/tag/";
     private static final String APK_ASSET_NAME = "YouTubeVot.apk";
     private static final String TAG_UPD = "YouTubeVotUpdate";
@@ -1093,7 +1094,7 @@ public class MainActivity extends Activity {
             long t0 = System.currentTimeMillis();
             String version = null;
             try {
-                conn = openConn(new URL(JSDELIVR_RESOLVED), 8000);
+                conn = openConn(new URL(JSDELIVR_RESOLVED + System.currentTimeMillis()), 8000);
                 if (conn.getResponseCode() == HttpURLConnection.HTTP_OK) {
                     in = conn.getInputStream();
                     JSONObject root = new JSONObject(readAll(in));
