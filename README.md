@@ -1,0 +1,130 @@
+# YouTube VoT — Android-клиент со встроенным закадровым переводом
+
+Легковесный Android-клиент YouTube на базе `WebView`, в который **встроен** плагин
+[voice-over-translation (VoT)](https://github.com/ilyhalight/voice-over-translation) —
+закадровый перевод видео и субтитры через технологии Яндекс.Переводчика.
+
+**Никаких Android Studio / Gradle:** APK собирается простым PowerShell-скриптом
+из готовых исходников (см. «Сборка»).
+
+---
+
+## Готовый APK
+
+Файл: [`out/YouTubeVot.apk`](out/YouTubeVot.apk) (~0,4 МБ, подписан debug-ключом, версия 1.1)
+
+Установка на телефон:
+
+```bash
+# вариант 1 — через adb (устройство в режиме отладки)
+adb install -r out\YouTubeVot.apk
+
+# вариант 2 — просто скопировать APK на телефон (USB/облако/мессенджер)
+# и открыть его файловым менеджером, разрешив «Установка из неизвестных источников»
+```
+
+Минимальная версия Android — **7.0 (API 24)**. Требуется доступ в интернет.
+
+---
+
+## Что внутри
+
+| Компонент | Путь |
+|---|---|
+| Юзерскрипт VoT v1.11.15 (бандл) | `src/assets/vot/vot.user.js` |
+| Среда запуска (GM-полифиллы + настройки) | `src/assets/vot/bootstrap.js` |
+| Активность (WebView + инжекция + скачивание) | `src/java/com/vot/youtube/MainActivity.java` |
+| Манифест / разметка / иконки | `src/AndroidManifest.xml`, `src/res/` |
+
+### Как это работает
+
+1. Приложение открывает `https://m.youtube.com/` в WebView (Chrome-движок, UA мобильного браузера).
+2. Сразу после старта страницы через `evaluateJavascript` в контекст страницы
+   инжектируется `bootstrap.js`, а затем сам `vot.user.js`.
+3. VoT работает в «страничном» режиме без Greasemonkey:
+   - хранение настроек — `localStorage` (встроенный фолбэк VoT);
+   - сетевые запросы — обычный `fetch` страницы (на YouTube это разрешено: CSP не содержит `connect-src`);
+   - **прокси-режим включается автоматически** (`isProxyOnlyExtension` = true для
+     не-Tampermonkey-среды); для РФ VoT дополнительно включает режим «через воркер».
+4. Предзаполненные по умолчанию настройки: язык перевода — **русский**,
+   авто-перевод и авто-субтитры при открытии видео. Всё меняется в меню скрипта
+   (плавающая кнопка VoT на странице видео).
+5. Скачивание аудио (`mp3`) и субтитров (`.srt`/`.vtt`/`.json`) сохраняется в «Загрузки».
+
+### Без рекламы и без входа (сборка 1.1)
+
+- **Реклама блокируется на уровне сети:** запросы к рекламным доменам
+  (`doubleclick.net`, `googlesyndication.com`, `googletagservices.com`,
+  `googleadservices.com`, `google-analytics.com`, `googletagmanager.com`, `ads.youtube.com`
+  и др.) перехватываются в `shouldInterceptRequest` и получают пустой ответ.
+- **Косметический фильтр:** рекламные блоки в ленте/поиске/плеере
+  (`ytd-display-ad-renderer`, `#player-ads`, `.ytp-ad-overlay-*` и т.п.) дополнительно
+  скрываются CSS, внедряемым вместе с bootstrap.
+- **Вход в аккаунт отключён:** переходы на `accounts.google.com` / `/signin` /
+  страницы аккаунта перехватываются (возврат на главную + уведомление), кнопка
+  «Войти» скрывается CSS-фильтром. Приложение всегда анонимное.
+
+### Ограничения WebView-клиента (важно прочитать)
+
+- **Вход в аккаунт Google отключён** (намеренно): приложение всегда работает
+  анонимно, подписки/история аккаунта недоступны.
+- **Реклама блокируется, но без гарантий** — это «кошки-мышки»: YouTube может
+  менять способы показа рекламы или показывать уведомление об использовании
+  блокировщика. Внутрикадровые ролики режутся через блокировку рекламных запросов;
+  если что-то проскочит — поможет повторная перезагрузка страницы.
+- **DRM/платный контент** — защищённый контент (например, некоторые фильмы в аренду)
+  может не воспроизводиться из-за ограничений Widevine в WebView.
+- **«Подтвердите, что вы не робот»** — при аномальном трафике YouTube может показывать
+  капчу; обычно помогает перезагрузка страницы.
+- **Серверы перевода и РФ:** перевод выполняется на серверах Яндекса через
+  воркер-прокси (`vot-worker.eu.cc`) и media-прокси (`media-proxy.toil.cc`).
+  Если озвучка не появляется, в меню VoT (внизу) можно указать **свой адрес
+  vot-worker** — например, развёрнутый из
+  [FOSWLY/vot-worker](https://github.com/FOSWLY/vot-worker).
+- Локальные видео перевести нельзя (ограничение сервиса Яндекса).
+
+---
+
+## Сборка из исходников
+
+Нужны:
+- **Java 8+** (на машине, где собран этот APK, использовался портативный Temurin 17);
+- **Android SDK** (только `build-tools 34.0.0` и `platforms;android-35`), не нужен Android Studio;
+- PowerShell 5+.
+
+Пути: SDK берётся из `ANDROID_SDK_ROOT` или из `C:\Temp\opencode\android-sdk`, JDK —
+из `JAVAC` / `ANDROID_JDK` / стандартных мест установки.
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\build.ps1
+```
+
+Результат — `out\YouTubeVot.apk`. Пайплайн:
+
+```
+aapt2 (ресурсы+манифест+assets) → javac (Java 8-таргет) → d8 (dex)
+→ упаковка classes.dex → zipalign → apksigner (debug-ключ, v2/v3)
+```
+
+---
+
+## Обновление скрипта VoT
+
+```powershell
+curl.exe -L -o src\assets\vot\vot.user.js `
+  https://raw.githubusercontent.com/ilyhalight/voice-over-translation/master/dist/vot.user.js
+# затем пересобрать APK:
+powershell -ExecutionPolicy Bypass -File .\build.ps1
+```
+
+---
+
+## Ссылки
+
+- [Оригинал: ilyhalight/voice-over-translation](https://github.com/ilyhalight/voice-over-translation)
+- [JS-библиотека: FOSWLY/vot.js](https://github.com/FOSWLY/vot.js)
+- [CLI: FOSWLY/vot-cli](https://github.com/FOSWLY/vot-cli)
+- [Свой воркер: FOSWLY/vot-worker](https://github.com/FOSWLY/vot-worker)
+
+Лицензия: MIT (реализация клиента). Встроенный скрипт VoT — MIT (автор Toil et al.).
+Прав на YouTube/Яндекс не принадлежат: это неофициальный клиент, используйте на свой риск.

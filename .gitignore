@@ -1,0 +1,12 @@
+# Сборка/артефакты
+build/
+out/
+*.idsig
+
+# Ключ подписи (пересоздаётся build.ps1 автоматически при сборке)
+debug.keystore
+
+# Прочее
+*.log
+.DS_Store
+Thumbs.db
