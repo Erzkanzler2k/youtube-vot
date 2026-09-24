@@ -24,11 +24,11 @@ jobs:
     runs-on: windows-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Set up JDK 17
         id: setup-java
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: '17'
@@ -42,7 +42,11 @@ jobs:
           "ANDROID_SDK_ROOT=$sdk" | Out-File -Append -Encoding ascii $env:GITHUB_ENV
           if (-not (Test-Path (Join-Path $sdk 'build-tools\34.0.0\aapt2.exe'))) {
             Invoke-WebRequest -Uri 'https://dl.google.com/android/repository/build-tools_r34-windows.zip' -OutFile (Join-Path $env:RUNNER_TEMP 'build-tools.zip')
-            Expand-Archive (Join-Path $env:RUNNER_TEMP 'build-tools.zip') -DestinationPath $sdk
+            Expand-Archive (Join-Path $env:RUNNER_TEMP 'build-tools.zip') -DestinationPath (Join-Path $sdk 'build-tools')
+            # в zip репозитория папка называется android-14; приводим к ожидаемому layout
+            if (Test-Path (Join-Path $sdk 'build-tools\android-14')) {
+              Rename-Item (Join-Path $sdk 'build-tools\android-14') '34.0.0'
+            }
           }
           if (-not (Test-Path (Join-Path $sdk 'platforms\android-35\android.jar'))) {
             Invoke-WebRequest -Uri 'https://dl.google.com/android/repository/platform-35_r01.zip' -OutFile (Join-Path $env:RUNNER_TEMP 'platform.zip')
