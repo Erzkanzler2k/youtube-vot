@@ -34,10 +34,25 @@ public class BypassVpnService extends VpnService {
             "googleusercontent.com", "gstatic.com", "googleapis.com",
             "googlesyndication.com", "doubleclick.net", "google.com", "google.ru"
     };
-    private static final String[] ALLOWED_PKGS = {
-            "com.google.android.webview",
-            "com.android.webview",
-            "com.google.android.trichromelibrary"
+
+    /**
+     * Пакеты, которые остаются ЗА пределами VPN.
+     *
+     * <p>Раньше здесь стоял allowlist ({@code addAllowedApplication}) с
+     * WebView-пакетами. Так не работает: allowlist строится по UID пакета, а
+     * процесс, который реально грузит страницы
+     * ({@code com.google.android.webview:sandboxed_process0}), — изолированный и
+     * имеет собственный UID (на проверенном телефоне u0_i9132 при разрешённом
+     * 10352). Он в allowlist не попадал, трафик YouTube мимо туннеля уходил
+     * напрямую, и обход не давал эффекта: VPN поднят, а пробировать нечего.
+     *
+     * <p>Поэтому вместо allowlist используем disallowlist: из VPN исключается
+     * только наше собственное приложение. Это нужно ещё и для защиты от петли —
+     * исходящие сокеты нативного прокси создаются в нашем процессе, и если бы его
+     * UID попал в туннель, трафик пошёл бы по кругу.
+     */
+    private static final String[] DISALLOWED_PKGS = {
+            "com.vot.youtube"
     };
 
     private static volatile boolean sActive;
@@ -102,23 +117,27 @@ public class BypassVpnService extends VpnService {
         builder.addRoute("0.0.0.0", 0);
         builder.addDnsServer("1.1.1.1");
         builder.setMtu(1500);
-        allowWebViewApps(builder);
+        excludeSelfFromVpn(builder);
         builder.setBlocking(true);
         ParcelFileDescriptor descriptor = builder.establish();
         if (descriptor == null) throw new IllegalStateException("VPN establish returned null");
         return descriptor;
     }
 
-    private void allowWebViewApps(Builder builder) {
-        boolean added = false;
-        for (String packageName : ALLOWED_PKGS) {
+    private void excludeSelfFromVpn(Builder builder) {
+        // Исключаем из туннеля только себя — см. комментарий у DISALLOWED_PKGS.
+        // Так в туннель попадает изолированный процесс WebView, который
+        // allowlist не покрывал.
+        boolean excluded = false;
+        for (String packageName : DISALLOWED_PKGS) {
             try {
-                builder.addAllowedApplication(packageName);
-                added = true;
-            } catch (Exception ignored) {
+                builder.addDisallowedApplication(packageName);
+                excluded = true;
+            } catch (Exception e) {
+                Log.w(TAG, "disallow failed: " + packageName + " (" + e + ")");
             }
         }
-        if (!added) throw new IllegalStateException("No WebView provider package available");
+        if (!excluded) throw new IllegalStateException("self package not excluded from VPN");
     }
 
     private void startProxy() {

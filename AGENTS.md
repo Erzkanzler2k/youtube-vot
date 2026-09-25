@@ -12,7 +12,7 @@
 ## Bypass transport
 - `src/java/com/vot/youtube/BypassVpnService.java` is the Android TUN entrypoint; the working path is native `hev-socks5-tunnel` -> local ByeDPI SOCKS5, not the legacy `BypassEngine`/`TcpFlow` classes.
 - `src/cpp/byedpi` and `src/cpp/hev-socks5-tunnel` are pinned git submodules; run `git submodule update --init --recursive` after checkout and do not casually rebase or edit upstream sources.
-- The native bypass must keep the app process outside the TUN so the local proxy does not loop back into itself; only the WebView provider packages are captured.
+- The native bypass must keep the app process outside the TUN so the local proxy does not loop back into itself. The VPN captures other traffic (including the WebView isolated renderer); the app's own UID is explicitly excluded with `addDisallowedApplication`. Do not replace this with an allowlist: isolated WebView renderer UIDs are not covered by `addAllowedApplication`.
 
 ## Build and verify
 - Run from the repository root: `powershell -ExecutionPolicy Bypass -File .\\build.ps1`.
