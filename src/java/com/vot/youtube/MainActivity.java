@@ -976,6 +976,19 @@ public class MainActivity extends Activity {
         });
         content.addView(rowRegion);
 
+        LinearLayout rowRecommendations = settingsRow(R.drawable.ic_refresh,
+                getString(R.string.settings_recommendations_reset),
+                getString(R.string.settings_recommendations_reset_desc));
+        rowRecommendations.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                pressFeedback(v);
+                if (holder[0] != null) holder[0].dismiss();
+                confirmRecommendationsReset();
+            }
+        });
+        content.addView(rowRecommendations);
+
         // ---- СЕКЦИЯ: Обновления ----
         content.addView(sectionHeader(getString(R.string.settings_section_updates)));
 
@@ -1307,6 +1320,29 @@ public class MainActivity extends Activity {
                     @Override
                     public void onClick(DialogInterface d, int w) {
                         resetPreferences();
+                    }
+                })
+                .setNegativeButton(android.R.string.cancel, null)
+                .show();
+    }
+
+    private void confirmRecommendationsReset() {
+        new AlertDialog.Builder(this)
+                .setTitle(R.string.settings_recommendations_reset)
+                .setMessage(R.string.settings_recommendations_reset_confirm)
+                .setPositiveButton(R.string.reset_yes, new DialogInterface.OnClickListener() {
+                    @Override
+                    public void onClick(DialogInterface d, int w) {
+                        CookieManager.getInstance().removeAllCookies(null);
+                        CookieManager.getInstance().flush();
+                        if (web != null) {
+                            // Не удаляем localStorage: там хранятся настройки VoT,
+                            // в частности proxyWorkerHost.
+                            web.clearCache(true);
+                            web.reload();
+                        }
+                        Toast.makeText(MainActivity.this, R.string.recommendations_reset_done,
+                                Toast.LENGTH_SHORT).show();
                     }
                 })
                 .setNegativeButton(android.R.string.cancel, null)

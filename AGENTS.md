@@ -25,4 +25,4 @@
 ## Release and signing
 - `.github/workflows/build-release.yml` runs the same PowerShell build on `windows-latest`; `workflow_dispatch` only builds, while a pushed `v*` tag also creates a GitHub Release.
 - Keep `src/AndroidManifest.xml` `versionCode`/`versionName`, `release-manifest.json` `tag`/APK URL, and the matching release notes synchronized when cutting a release; the app uses the manifest as its jsDelivr fallback source.
-- `debug.keystore` is intentionally tracked and used by the build so updates can be installed over the existing app. Do not replace or remove it without an explicit signing/release migration.
+- Release signing uses a private keystore supplied through `VOT_KEYSTORE`, `VOT_KEYSTORE_PASSWORD`, `VOT_KEY_ALIAS` and `VOT_KEY_PASSWORD`; no debug-signing fallback is allowed. Never commit the release keystore or its credentials.

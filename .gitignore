@@ -6,7 +6,10 @@ out/
 # Ключ подписи намеренно в репозитории:
 # чтобы любая пересборка (на любой машине) давала ту же подпись и
 # новые версии устанавливались поверх старых без сноса приложения.
-# debug.keystore
+# Never commit signing keys or credentials
+*.jks
+*.keystore
+release-signing.env
 
 # Прочее
 *.log

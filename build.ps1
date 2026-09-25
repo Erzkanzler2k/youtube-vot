@@ -139,14 +139,19 @@ $aligned = Join-Path $build "aligned.apk"
 if ($LASTEXITCODE -ne 0) { throw "zipalign failed" }
 
 # --- 7. Sign -----------------------------------------------------------------
-Write-Host "[8/8] apksigner (debug key, v1+v2+v3)..." -ForegroundColor Cyan
-$ks  = Join-Path $root "debug.keystore"
-$final = Join-Path $out "YouTubeVot.apk"
-if (-not (Test-Path $ks)) {
-    & keytool -genkeypair -v -keystore $ks -alias vot -keyalg RSA -keysize 2048 -validity 10950 `
-        -storepass android -keypass android -dname "CN=YouTubeVot,O=VoT,C=RU" | Out-Null
+Write-Host "[8/8] apksigner (release key, v1+v2+v3)..." -ForegroundColor Cyan
+$ks = $env:VOT_KEYSTORE
+$ksPass = $env:VOT_KEYSTORE_PASSWORD
+$keyAlias = $env:VOT_KEY_ALIAS
+$keyPass = $env:VOT_KEY_PASSWORD
+if ([string]::IsNullOrWhiteSpace($ks) -or [string]::IsNullOrWhiteSpace($ksPass) -or
+    [string]::IsNullOrWhiteSpace($keyAlias) -or [string]::IsNullOrWhiteSpace($keyPass)) {
+    throw "Set VOT_KEYSTORE, VOT_KEYSTORE_PASSWORD, VOT_KEY_ALIAS and VOT_KEY_PASSWORD before building"
 }
-& "$bt\apksigner.bat" sign --ks $ks --ks-pass pass:android --key-pass pass:android `
+if (-not (Test-Path $ks)) { throw "Release keystore not found: $ks" }
+$final = Join-Path $out "YouTubeVot.apk"
+& "$bt\apksigner.bat" sign --ks $ks --ks-key-alias $keyAlias `
+    --ks-pass "pass:$ksPass" --key-pass "pass:$keyPass" `
     --v1-signing-enabled true --v2-signing-enabled true --v3-signing-enabled true `
     --out $final $aligned
 if ($LASTEXITCODE -ne 0) { throw "apksigner sign failed" }

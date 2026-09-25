@@ -24,6 +24,10 @@
     <string name="settings_bypass_state_on">Включён · трафик идёт через обход</string>
     <string name="settings_bypass_state_off">Выключен · YouTube может быть заблокирован</string>
     <string name="settings_region">Страна контента</string>
+    <string name="settings_recommendations_reset">Сбросить рекомендации</string>
+    <string name="settings_recommendations_reset_desc">Очистить cookies и обновить ленту YouTube</string>
+    <string name="settings_recommendations_reset_confirm">Удалить cookies YouTube и обновить текущую страницу? Рекомендации будут сброшены. Настройки VoT сохранятся.</string>
+    <string name="recommendations_reset_done">Рекомендации сброшены</string>
     <string name="settings_auto_update">Автообновление</string>
     <string name="settings_auto_update_desc">Проверять новые версии на GitHub</string>
     <string name="settings_check_update">Проверить обновления</string>
