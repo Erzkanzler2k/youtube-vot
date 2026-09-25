@@ -7,8 +7,13 @@ import android.app.PendingIntent;
 import android.app.Service;
 import android.content.Context;
 import android.content.Intent;
+import android.media.AudioAttributes;
+import android.media.AudioFocusRequest;
+import android.media.AudioManager;
+import android.media.MediaMetadata;
 import android.media.session.MediaSession;
 import android.media.session.PlaybackState;
+import android.net.Uri;
 import android.os.Build;
 import android.os.IBinder;
 
@@ -41,7 +46,15 @@ public final class PlaybackService extends Service {
     private static volatile Controller controller;
 
     private MediaSession session;
+    private AudioManager audioManager;
+    private AudioFocusRequest audioFocusRequest;
+    private AudioManager.OnAudioFocusChangeListener legacyFocusListener;
     private boolean playing;
+    private long position;
+    private long duration;
+    private String title = "";
+    private String artist = "";
+    private String artworkUri = "";
 
     /** Activity регистрирует WebView-команды, пока Activity находится в памяти. */
     public interface Controller {
@@ -68,6 +81,13 @@ public final class PlaybackService extends Service {
         if (instance != null) instance.setPlaying(value);
     }
 
+    public static void updatePlaybackInfo(String nextTitle, String nextArtist,
+                                           long nextPosition, long nextDuration,
+                                           boolean paused, String nextArtworkUri) {
+        if (instance != null) instance.applyPlaybackInfo(nextTitle, nextArtist,
+                nextPosition, nextDuration, paused, nextArtworkUri);
+    }
+
     private static PlaybackService instance;
 
     @Override
@@ -75,6 +95,7 @@ public final class PlaybackService extends Service {
         super.onCreate();
         instance = this;
         running = true;
+        audioManager = (AudioManager) getSystemService(Context.AUDIO_SERVICE);
         createChannel();
         session = new MediaSession(this, "YouTubeVoTPlayback");
         session.setCallback(new MediaSession.Callback() {
@@ -171,11 +192,43 @@ public final class PlaybackService extends Service {
     }
 
     private long currentPosition() {
-        return 0L;
+        return position;
+    }
+
+    private void applyPlaybackInfo(String nextTitle, String nextArtist,
+                                   long nextPosition, long nextDuration,
+                                   boolean paused, String nextArtworkUri) {
+        boolean changed = !nextTitle.equals(title) || !nextArtist.equals(artist)
+                || !nextArtworkUri.equals(artworkUri);
+        title = nextTitle;
+        artist = nextArtist;
+        position = Math.max(0L, nextPosition);
+        duration = Math.max(0L, nextDuration);
+        artworkUri = nextArtworkUri;
+        setPlaying(!paused, false);
+        if (session != null) {
+            MediaMetadata.Builder metadata = new MediaMetadata.Builder()
+                    .putString(MediaMetadata.METADATA_KEY_TITLE, title)
+                    .putString(MediaMetadata.METADATA_KEY_ARTIST, artist)
+                    .putLong(MediaMetadata.METADATA_KEY_DURATION, duration);
+            if (!artworkUri.isEmpty()) {
+                metadata.putString(MediaMetadata.METADATA_KEY_ART_URI, artworkUri);
+            }
+            session.setMetadata(metadata.build());
+        }
+        if (changed) updateNotification();
     }
 
     private void setPlaying(boolean value) {
+        setPlaying(value, true);
+    }
+
+    private void setPlaying(boolean value, boolean requestFocus) {
         playing = value;
+        if (requestFocus) {
+            if (value) requestAudioFocus();
+            else abandonAudioFocus();
+        }
         if (session != null) {
             session.setPlaybackState(new PlaybackState.Builder()
                     .setActions(PlaybackState.ACTION_PLAY | PlaybackState.ACTION_PAUSE
@@ -183,10 +236,55 @@ public final class PlaybackService extends Service {
                             | PlaybackState.ACTION_SKIP_TO_PREVIOUS
                             | PlaybackState.ACTION_SEEK_TO | PlaybackState.ACTION_STOP)
                     .setState(value ? PlaybackState.STATE_PLAYING : PlaybackState.STATE_PAUSED,
-                            currentPosition(), 1.0f)
+                            position, duration > 0 ? 1.0f : 0.0f)
                     .build());
         }
         updateNotification();
+    }
+
+    private void requestAudioFocus() {
+        if (audioManager == null) return;
+        if (Build.VERSION.SDK_INT >= 26) {
+            audioFocusRequest = new AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN)
+                    .setAudioAttributes(new AudioAttributes.Builder()
+                            .setUsage(AudioAttributes.USAGE_MEDIA)
+                            .setContentType(AudioAttributes.CONTENT_TYPE_MOVIE)
+                            .build())
+                    .setOnAudioFocusChangeListener(new AudioManager.OnAudioFocusChangeListener() {
+                        @Override
+                        public void onAudioFocusChange(int focusChange) {
+                            if (focusChange <= 0) {
+                                send(CONTROL_PAUSE);
+                                setPlaying(false, false);
+                            }
+                        }
+                    })
+                    .build();
+            audioManager.requestAudioFocus(audioFocusRequest);
+        } else {
+            legacyFocusListener = new AudioManager.OnAudioFocusChangeListener() {
+                @Override
+                public void onAudioFocusChange(int focusChange) {
+                    if (focusChange <= 0) {
+                        send(CONTROL_PAUSE);
+                        setPlaying(false, false);
+                    }
+                }
+            };
+            audioManager.requestAudioFocus(legacyFocusListener,
+                    AudioManager.STREAM_MUSIC, AudioManager.AUDIOFOCUS_GAIN);
+        }
+    }
+
+    private void abandonAudioFocus() {
+        if (audioManager == null) return;
+        if (Build.VERSION.SDK_INT >= 26 && audioFocusRequest != null) {
+            audioManager.abandonAudioFocusRequest(audioFocusRequest);
+            audioFocusRequest = null;
+        } else if (legacyFocusListener != null) {
+            audioManager.abandonAudioFocus(legacyFocusListener);
+            legacyFocusListener = null;
+        }
     }
 
     private void startForegroundCompat() {
@@ -210,8 +308,8 @@ public final class PlaybackService extends Service {
             b = new Notification.Builder(this);
         }
         b.setSmallIcon(R.mipmap.ic_launcher)
-                .setContentTitle(getString(R.string.playback_notification_title))
-                .setContentText(getString(R.string.playback_notification_text))
+                .setContentTitle(title.isEmpty() ? getString(R.string.playback_notification_title) : title)
+                .setContentText(artist.isEmpty() ? getString(R.string.playback_notification_text) : artist)
                 .setContentIntent(openPi)
                 .setVisibility(Notification.VISIBILITY_PUBLIC)
                 .setOnlyAlertOnce(true)
@@ -257,6 +355,7 @@ public final class PlaybackService extends Service {
     @Override
     public void onDestroy() {
         running = false;
+        abandonAudioFocus();
         if (session != null) {
             session.setActive(false);
             session.release();

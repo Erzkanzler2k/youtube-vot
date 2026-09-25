@@ -36,6 +36,8 @@ import android.net.VpnService;
 import android.os.AsyncTask;
 import android.os.Build;
 import android.os.Bundle;
+import android.os.Handler;
+import android.os.Looper;
 import android.os.Environment;
 import android.provider.MediaStore;
 import android.provider.Settings;
@@ -149,6 +151,14 @@ public class MainActivity extends Activity {
     private File downloadedApkFile;
     private DownloadManager downloadManager;
     private BroadcastReceiver downloadReceiver;
+    private final Handler playbackHandler = new Handler(Looper.getMainLooper());
+    private final Runnable playbackPoll = new Runnable() {
+        @Override
+        public void run() {
+            pollPlaybackState();
+            playbackHandler.postDelayed(this, 1000L);
+        }
+    };
 
     private final PlaybackService.Controller playbackController =
             new PlaybackService.Controller() {
@@ -251,6 +261,7 @@ public class MainActivity extends Activity {
 
         CookieManager.getInstance().setAcceptThirdPartyCookies(web, true);
         PlaybackService.attach(playbackController);
+        startPlaybackPolling();
 
         web.setWebViewClient(new WebViewClient() {
             @Override
@@ -1267,6 +1278,38 @@ public class MainActivity extends Activity {
         }
     }
 
+    private void startPlaybackPolling() {
+        playbackHandler.removeCallbacks(playbackPoll);
+        playbackHandler.post(playbackPoll);
+    }
+
+    private void pollPlaybackState() {
+        if (!PlaybackService.isRunning() || web == null) return;
+        String js = "(function(){var v=document.querySelector('video');if(!v)return '{}';"
+                + "function t(s){var e=document.querySelector(s);return e?"
+                + "e.textContent.trim():''}var m=document.querySelector("
+                + "\"meta[property='og:image']\");return JSON.stringify({"
+                + "title:t('h1'),artist:t('ytd-channel-name'),"
+                + "position:Math.max(0,Math.round((v.currentTime||0)*1000)),"
+                + "duration:Math.max(0,Math.round((v.duration||0)*1000)),"
+                + "paused:!!v.paused,art:m?m.content:''});})()";
+        web.evaluateJavascript(js, new ValueCallback<String>() {
+            @Override
+            public void onReceiveValue(String value) {
+                if (value == null || "null".equals(value) || "undefined".equals(value)) return;
+                try {
+                    JSONObject data = new JSONArray("[" + value + "]").getJSONObject(0);
+                    if (data.length() == 0) return;
+                    PlaybackService.updatePlaybackInfo(
+                            data.optString("title", ""), data.optString("artist", ""),
+                            data.optLong("position", 0L), data.optLong("duration", 0L),
+                            data.optBoolean("paused", true), data.optString("art", ""));
+                } catch (Exception ignored) {
+                }
+            }
+        });
+    }
+
     private void runVideoCommand(String selector, boolean play) {
         if (web == null) return;
         String js = "(function(){var e=document.querySelector(" + JSONObject.quote(selector) + ");"
@@ -2092,6 +2135,7 @@ public class MainActivity extends Activity {
     protected void onDestroy() {
         unregisterNetworkCallback();
         PlaybackService.detach(playbackController);
+        playbackHandler.removeCallbacks(playbackPoll);
         unregisterDownloadReceiver();
         if (web != null) {
             web.destroy();
