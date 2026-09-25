@@ -12,3 +12,6 @@ out/
 *.log
 .DS_Store
 Thumbs.db
+# Сборочные артефакты NDK (попадают в APK через ZipFix, в git не нужны)
+src/cpp/libs/
+src/cpp/obj/
