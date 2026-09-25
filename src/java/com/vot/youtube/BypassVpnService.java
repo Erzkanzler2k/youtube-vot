@@ -17,7 +17,7 @@ import java.io.FileOutputStream;
 import java.io.OutputStreamWriter;
 import java.io.PrintWriter;
 
-import hev.sockstun.TProxyService;
+import hev.htproxy.TProxyService;
 
 public class BypassVpnService extends VpnService {
     private static final String TAG = "YouTubeVotBypass";
@@ -171,9 +171,10 @@ public class BypassVpnService extends VpnService {
         writer.print("misc:\n");
         writer.print("  task-stack-size: 81920\n");
         writer.close();
-        if (!TProxyService.TProxyStartService(tunnelConfig.getAbsolutePath(), tun.getFd())) {
-            throw new IllegalStateException("tun2socks start failed");
-        }
+        // TProxyStartService возвращает void: нативный код регистрирует его с
+        // сигнатурой (Ljava/lang/String;I)V, поэтому успех проверить нечем —
+        // падение поймаем по отсутствию туннеля и логам.
+        TProxyService.TProxyStartService(tunnelConfig.getAbsolutePath(), tun.getFd());
     }
 
     private void stopTunnel() {

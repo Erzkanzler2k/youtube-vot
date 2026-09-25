@@ -1,0 +1,20 @@
+./obj/local/x86_64/objs/lwip/src/api/tcpip.o: \
+  hev-socks5-tunnel/third-part/lwip/src/api/tcpip.c \
+  hev-socks5-tunnel/third-part/lwip/src/include/lwip/opt.h \
+  hev-socks5-tunnel/third-part/lwip/src/ports/include/lwipopts.h \
+  hev-socks5-tunnel/third-part/lwip/src/include/lwip/debug.h \
+  hev-socks5-tunnel/third-part/lwip/src/include/lwip/arch.h \
+  hev-socks5-tunnel/third-part/lwip/src/ports/include/arch/cc.h \
+  hev-socks5-tunnel/third-part/lwip/src/ports/include/arch/../../unix/include/cc.h
+
+hev-socks5-tunnel/third-part/lwip/src/include/lwip/opt.h:
+
+hev-socks5-tunnel/third-part/lwip/src/ports/include/lwipopts.h:
+
+hev-socks5-tunnel/third-part/lwip/src/include/lwip/debug.h:
+
+hev-socks5-tunnel/third-part/lwip/src/include/lwip/arch.h:
+
+hev-socks5-tunnel/third-part/lwip/src/ports/include/arch/cc.h:
+
+hev-socks5-tunnel/third-part/lwip/src/ports/include/arch/../../unix/include/cc.h:
