@@ -150,6 +150,38 @@ public class MainActivity extends Activity {
     private DownloadManager downloadManager;
     private BroadcastReceiver downloadReceiver;
 
+    private final PlaybackService.Controller playbackController =
+            new PlaybackService.Controller() {
+                @Override
+                public void play() {
+                    runVideoCommand("video", true);
+                }
+
+                @Override
+                public void pause() {
+                    runVideoCommand("video", false);
+                }
+
+                @Override
+                public void next() {
+                    if (web != null && web.canGoForward()) web.goForward();
+                }
+
+                @Override
+                public void previous() {
+                    if (web != null && web.canGoBack()) web.goBack();
+                }
+
+                @Override
+                public void seekBy(long deltaMs) {
+                    if (web == null) return;
+                    String js = "(function(){var v=document.querySelector('video');if(v){"
+                            + "try{v.currentTime=Math.max(0,Math.min(v.duration||1e99,"
+                            + "v.currentTime+" + deltaMs + "));}catch(e){}}}());";
+                    web.evaluateJavascript(js, null);
+                }
+            };
+
     // Базовые отступы панели (без системных инсетов), чтобы корректно дополнять их
     private int bottomBarBaseStart, bottomBarBaseEnd, bottomBarBaseTop, bottomBarBaseBottom;
 
@@ -218,6 +250,7 @@ public class MainActivity extends Activity {
         web.setHorizontalScrollBarEnabled(false);
 
         CookieManager.getInstance().setAcceptThirdPartyCookies(web, true);
+        PlaybackService.attach(playbackController);
 
         web.setWebViewClient(new WebViewClient() {
             @Override
@@ -1039,6 +1072,35 @@ public class MainActivity extends Activity {
         });
         content.addView(rowWorker);
 
+        LinearLayout rowPlayback = settingsRow(R.drawable.ic_play,
+                getString(R.string.settings_playback),
+                getString(R.string.settings_playback_desc));
+        rowPlayback.setClickable(false);
+        rowPlayback.setFocusable(false);
+        final Switch swPlayback = new Switch(this);
+        swPlayback.setChecked(PlaybackService.isRunning());
+        swPlayback.setOnCheckedChangeListener(new CompoundButton.OnCheckedChangeListener() {
+            @Override
+            public void onCheckedChanged(CompoundButton b, boolean checked) {
+                if (checked) {
+                    if (Build.VERSION.SDK_INT >= 33) {
+                        requestPermissions(new String[]{android.Manifest.permission.POST_NOTIFICATIONS}, 7002);
+                    }
+                    Intent i = new Intent(MainActivity.this, PlaybackService.class)
+                            .setAction(PlaybackService.ACTION_START);
+                    if (Build.VERSION.SDK_INT >= 26) startForegroundService(i);
+                    else startService(i);
+                } else {
+                    stopService(new Intent(MainActivity.this, PlaybackService.class));
+                }
+            }
+        });
+        LinearLayout.LayoutParams swPlaybackLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        swPlaybackLp.setMarginStart(dp(16));
+        rowPlayback.addView(swPlayback, swPlaybackLp);
+        content.addView(rowPlayback);
+
         LinearLayout rowBypass = settingsRow(R.drawable.ic_shield,
                 getString(R.string.settings_bypass),
                 getString(R.string.settings_bypass_desc));
@@ -1203,6 +1265,18 @@ public class MainActivity extends Activity {
                         .edit().putBoolean(BypassVpnService.PREF_ENABLED, false).apply();
             }
         }
+    }
+
+    private void runVideoCommand(String selector, boolean play) {
+        if (web == null) return;
+        String js = "(function(){var e=document.querySelector(" + JSONObject.quote(selector) + ");"
+                + "if(e){try{" + (play ? "e.play();" : "e.pause();") + "}catch(x){}}})();";
+        web.evaluateJavascript(js, new android.webkit.ValueCallback<String>() {
+            @Override
+            public void onReceiveValue(String value) {
+                PlaybackService.setControllerPlaying(play);
+            }
+        });
     }
 
     /** Строка диалога настроек: иконка + заголовок + подпись. */
@@ -2002,7 +2076,7 @@ public class MainActivity extends Activity {
     @Override
     protected void onPause() {
         super.onPause();
-        if (web != null) web.onPause();
+        if (web != null && !PlaybackService.isRunning()) web.onPause();
     }
 
     @Override
@@ -2017,6 +2091,7 @@ public class MainActivity extends Activity {
     @Override
     protected void onDestroy() {
         unregisterNetworkCallback();
+        PlaybackService.detach(playbackController);
         unregisterDownloadReceiver();
         if (web != null) {
             web.destroy();

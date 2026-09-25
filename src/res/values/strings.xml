@@ -42,6 +42,15 @@
     <string name="bypass_notif_title">YouTube VoT: обход включён</string>
     <string name="bypass_notif_text">Весь трафик идёт через DPI-обход</string>
     <string name="settings_worker">Сервер перевода</string>
+    <string name="settings_playback">Фоновое воспроизведение</string>
+    <string name="settings_playback_desc">Продолжать звук при выключенном экране</string>
+    <string name="playback_channel">Воспроизведение YouTube</string>
+    <string name="playback_notification_title">YouTube VoT</string>
+    <string name="playback_notification_text">Фоновое воспроизведение</string>
+    <string name="playback_play">Воспроизвести</string>
+    <string name="playback_pause">Пауза</string>
+    <string name="playback_next">Далее</string>
+    <string name="playback_previous">Назад</string>
     <string name="settings_worker_desc">Адрес воркера озвучки</string>
     <string name="settings_worker_title">Адрес воркера перевода</string>
     <string name="settings_worker_hint">https://… (пусто — по умолчанию)</string>

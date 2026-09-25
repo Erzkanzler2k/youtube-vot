@@ -1,8 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     package="com.vot.youtube"
-    android:versionCode="31"
-    android:versionName="2.5.3">
+    android:versionCode="32"
+    android:versionName="2.5.4">
 
     <uses-sdk
         android:minSdkVersion="24"
@@ -13,6 +13,7 @@
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
     <uses-permission
         android:name="android.permission.WRITE_EXTERNAL_STORAGE"
         android:maxSdkVersion="28" />
@@ -56,6 +57,11 @@
                     android:scheme="https" />
             </intent-filter>
         </activity>
+    <service
+            android:name=".PlaybackService"
+            android:exported="false"
+            android:foregroundServiceType="mediaPlayback" />
+
     <service
             android:name=".BypassVpnService"
             android:exported="false"
