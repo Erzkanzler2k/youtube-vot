@@ -42,8 +42,7 @@ import android.os.Environment;
 import android.provider.MediaStore;
 import android.provider.Settings;
 import android.text.TextUtils;
-import android.util.Log;
-import android.view.DisplayCutout;
+import android.util.Log;import android.view.DisplayCutout;
 import android.view.Gravity;
 import android.view.HapticFeedbackConstants;
 import android.view.View;
@@ -81,6 +80,7 @@ import java.net.URL;
 import java.util.Locale;
 
 import org.json.JSONArray;
+import org.json.JSONException;
 import org.json.JSONObject;
 
 public class MainActivity extends Activity {
@@ -152,6 +152,8 @@ public class MainActivity extends Activity {
     private DownloadManager downloadManager;
     private BroadcastReceiver downloadReceiver;
     private final Handler playbackHandler = new Handler(Looper.getMainLooper());
+    /** Отдельный handler для перезапуска обхода: не смешивать с опросом плеера. */
+    private final Handler bypassHandler = new Handler(Looper.getMainLooper());
     private final Runnable playbackPoll = new Runnable() {
         @Override
         public void run() {
@@ -860,8 +862,13 @@ public class MainActivity extends Activity {
      * Показываем фактическое состояние сервиса, а не только преф: сервис мог
      * быть убит системой, и преф остался в «включено».
      */
+    /**
+     * Точка в тулбаре показывает измеренное состояние, а не факт запуска:
+     * поднятый, но ещё не проверенный обход не заслуживает зелёной точки.
+     */
     private void updateBypassIndicator() {
-        setBypassIndicator(BypassVpnService.isActive());
+        setBypassIndicator(BypassVpnService.isActive()
+                && BypassVpnService.getState(this) != BypassVpnService.STATE_FAILED);
     }
 
     private void setBypassIndicator(boolean on) {
@@ -1122,9 +1129,8 @@ public class MainActivity extends Activity {
         // Источник истины — фактическое состояние сервиса, а не преф: преф хранит
         // намерение пользователя и может остаться «включено», пока сервис мёртв.
         final boolean bypassOn = BypassVpnService.isActive();
-        final TextView bypassState = setRowState(rowBypass, bypassOn
-                ? getString(R.string.settings_bypass_state_on)
-                : getString(R.string.settings_bypass_state_off));
+        final TextView bypassState = setRowState(rowBypass, bypassStateText(
+                BypassVpnService.getState(this), bypassOn));
         final Switch swBypass = new Switch(this);
         swBypass.setChecked(bypassOn);
         swBypass.setOnCheckedChangeListener(new CompoundButton.OnCheckedChangeListener() {
@@ -1142,12 +1148,10 @@ public class MainActivity extends Activity {
                     startService(stop);
                     bypassPrefs.edit().putBoolean(BypassVpnService.PREF_ENABLED, false).apply();
                 }
-                // Строка состояния и индикатор в тулбаре показывают реальный
-                // статус, а не только нажатую кнопку. Показываем точку сразу по
-                // действию пользователя: сервис пишет PREF_ENABLED асинхронно,
-                // и чтение префа сразу дало бы устаревшее «выключено».
+                // Состояние пишется асинхронно и отражает измерение, поэтому
+                // сразу показываем «проверяем», а не выдуманное «работает».
                 bypassState.setText(checked
-                        ? getString(R.string.settings_bypass_state_on)
+                        ? getString(R.string.bypass_state_verifying)
                         : getString(R.string.settings_bypass_state_off));
                 setBypassIndicator(checked);
             }
@@ -1157,6 +1161,65 @@ public class MainActivity extends Activity {
         swBypassLp.setMarginStart(dp(16));
         rowBypass.addView(swBypass, swBypassLp);
         content.addView(rowBypass);
+
+        // Отчёт и действия появляются только когда обход честно провалился.
+        // Молчащий переключатель здесь и есть та ложь, которую мы убираем.
+        if (BypassVpnService.getState(this) == BypassVpnService.STATE_FAILED) {
+            LinearLayout rowReport = settingsRow(R.drawable.ic_shield,
+                    getString(R.string.bypass_state_failed),
+                    getString(R.string.bypass_report_hosts));
+            rowReport.setOnClickListener(new View.OnClickListener() {
+                @Override
+                public void onClick(View v) {
+                    pressFeedback(v);
+                    if (holder[0] != null) holder[0].dismiss();
+                    showBypassReport();
+                }
+            });
+            content.addView(rowReport);
+        }
+
+        // Стратегия десинка — это наборы CLI-флагов byedpi (те же, что у zapret),
+        // а не отдельная реализация. Приложение подбирает стратегию само, поэтому
+        // значение здесь — гипотеза, которую всё равно перепроверяет замер.
+        final BypassStrategy[] strategyList = BypassStrategy.all();
+        String currentStrategyId = bypassPrefs.getString(
+                BypassVpnService.PREF_STRATEGY, BypassStrategy.ID_DEFAULT);
+        int currentStrategyIndex = 0;
+        for (int i = 0; i < strategyList.length; i++) {
+            if (strategyList[i].getId().equals(currentStrategyId)) {
+                currentStrategyIndex = i;
+                break;
+            }
+        }
+        final int[] selectedStrategyIndex = {currentStrategyIndex};
+        LinearLayout rowStrategy = settingsRow(R.drawable.ic_shield,
+                getString(R.string.settings_bypass_strategy),
+                getString(strategyList[currentStrategyIndex].getLabelRes()));
+        rowStrategy.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                pressFeedback(v);
+                if (holder[0] != null) holder[0].dismiss();
+                showStrategyDialog(strategyList, selectedStrategyIndex);
+            }
+        });
+        content.addView(rowStrategy);
+
+        // MTU туннеля. 1500 — источник плавающих подвисаний на сетях с PPPoE и
+        // туннелями операторов, поэтому по умолчанию 1400, а значение видно.
+        LinearLayout rowMtu = settingsRow(R.drawable.ic_shield,
+                getString(R.string.settings_mtu),
+                getString(R.string.settings_mtu_desc, BypassVpnService.getMtu(this)));
+        rowMtu.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                pressFeedback(v);
+                if (holder[0] != null) holder[0].dismiss();
+                showMtuDialog();
+            }
+        });
+        content.addView(rowMtu);
 
         // ---- СЕКЦИЯ: Опасная зона ----
         content.addView(sectionHeader(getString(R.string.settings_section_danger)));
@@ -1232,6 +1295,201 @@ public class MainActivity extends Activity {
     }
 
     /* ---------------- Обход блокировок (VPN, ветка bypass) ---------------- */
+
+    /**
+     * Честный статус обхода: берётся из результата измерения, а не из факта
+     * нажатия. Пока измерения не было, показываем «выключено», а не «работает».
+     */
+    private String bypassStateText(int state, boolean active) {
+        switch (state) {
+            case BypassVpnService.STATE_OK:
+                return getString(R.string.bypass_state_ok);
+            case BypassVpnService.STATE_SLOW:
+                return getString(R.string.bypass_state_slow);
+            case BypassVpnService.STATE_VERIFYING:
+                return getString(R.string.bypass_state_verifying);
+            case BypassVpnService.STATE_FAILED:
+                return getString(R.string.bypass_state_failed);
+            default:
+                return getString(active
+                        ? R.string.bypass_state_verifying
+                        : R.string.settings_bypass_state_off);
+        }
+    }
+
+    /**
+     * Отчёт о провале плюс конкретный выход из ситуации. «Не работает» без
+     * перечня проверенного бесполезно, поэтому показываем хосты, счётчик
+     * стратегий и предлагаем действия, а не просто строку ошибки.
+     */
+    private void showBypassReport() {
+        String report = getSharedPreferences(BypassVpnService.PREFS_BYPASS, MODE_PRIVATE)
+                .getString(BypassVpnService.PREF_REPORT, null);
+        StringBuilder text = new StringBuilder();
+        if (report == null) {
+            text.append(getString(R.string.bypass_report_none));
+        } else {
+            try {
+                JSONObject json = new JSONObject(report);
+                String reason = json.optString("reason", "");
+                if (!reason.isEmpty()) {
+                    text.append(getString(R.string.bypass_report_why, reason)).append('\n');
+                }
+                if (json.optBoolean("swept", false)) {
+                    text.append(getString(R.string.bypass_report_swept,
+                            BypassStrategy.all().length, BypassStrategy.all().length))
+                            .append('\n');
+                } else {
+                    text.append(getString(R.string.bypass_report_swept_unknown)).append('\n');
+                }
+                text.append(getString(R.string.bypass_report_hosts)).append('\n');
+                JSONArray hosts = json.optJSONArray("hosts");
+                if (hosts != null) {
+                    for (int i = 0; i < hosts.length() && i < BypassProbe.HOSTS.length; i++) {
+                        text.append("· ").append(BypassProbe.HOSTS[i])
+                                .append(" — ").append(hosts.optLong(i, -1)).append('\n');
+                    }
+                }
+                appendTransportNotes(text, json);
+                text.append(getString(R.string.bypass_report_mtu,
+                        json.optInt("mtu", BypassVpnService.DEFAULT_MTU)));
+            } catch (JSONException error) {
+                text.append(getString(R.string.bypass_report_none));
+            }
+        }
+
+        AlertDialog dialog = new AlertDialog.Builder(this)
+                .setTitle(R.string.bypass_report_title)
+                .setMessage(text.toString().trim())
+                .setPositiveButton(R.string.bypass_retry, new DialogInterface.OnClickListener() {
+                    @Override
+                    public void onClick(DialogInterface d, int which) {
+                        d.dismiss();
+                        restartBypass();
+                    }
+                })
+                .setNeutralButton(R.string.bypass_action_later, null)
+                .setNegativeButton(R.string.bypass_action_off,
+                        new DialogInterface.OnClickListener() {
+                            @Override
+                            public void onClick(DialogInterface d, int which) {
+                                stopBypassService();
+                                Toast.makeText(MainActivity.this,
+                                        R.string.bypass_action_off_done, Toast.LENGTH_SHORT).show();
+                                updateBypassIndicator();
+                            }
+                        })
+                .create();
+        dialog.show();
+        applyDialogTheme(dialog);
+    }
+
+    /** Дефекты транспорта в отчёте: они не лечатся сменой стратегии. */
+    private void appendTransportNotes(StringBuilder text, JSONObject json) {
+        if (json.has("quicMs")) {
+            long quic = json.optLong("quicMs", BypassProbe.TIMED_OUT);
+            if (quic == BypassProbe.TIMED_OUT) {
+                text.append(getString(R.string.bypass_report_quic_slow)).append('\n');
+            } else if (json.optBoolean("quicGotData", false)) {
+                text.append(getString(R.string.bypass_report_quic_open)).append('\n');
+            } else {
+                text.append(getString(R.string.bypass_report_quic_ok)).append('\n');
+            }
+        }
+        if (json.has("ipv6Ms")) {
+            long ipv6 = json.optLong("ipv6Ms", BypassProbe.FAILED);
+            if (ipv6 == BypassProbe.NO_IPV6) {
+                text.append(getString(R.string.bypass_report_ipv6_none)).append('\n');
+            } else if (ipv6 < 0) {
+                text.append(getString(R.string.bypass_report_ipv6_bad)).append('\n');
+            } else {
+                text.append(getString(R.string.bypass_report_ipv6_ok)).append('\n');
+            }
+        }
+    }
+
+    private void showMtuDialog() {
+        final int[] values = {1280, 1360, 1400, 1460, 1500};
+        int current = BypassVpnService.getMtu(this);
+        int selected = 0;
+        for (int i = 0; i < values.length; i++) {
+            if (values[i] == current) selected = i;
+        }
+        CharSequence[] labels = new CharSequence[values.length];
+        for (int i = 0; i < values.length; i++) {
+            labels[i] = String.valueOf(values[i]);
+        }
+        AlertDialog dialog = new AlertDialog.Builder(this)
+                .setTitle(R.string.settings_mtu)
+                .setSingleChoiceItems(labels, selected, new DialogInterface.OnClickListener() {
+                    @Override
+                    public void onClick(DialogInterface d, int which) {
+                        d.dismiss();
+                        BypassVpnService.setMtu(MainActivity.this, values[which]);
+                        restartBypass();
+                    }
+                })
+                .setNegativeButton(R.string.settings_close, null)
+                .create();
+        dialog.show();
+        applyDialogTheme(dialog);
+    }
+
+    private void restartBypass() {
+        // Аргументы byedpi и конфиг транспорта читаются один раз при старте,
+        // поэтому активный обход перезапускаем. Пауза нужна, чтобы ACTION_STOP
+        // успел отработать stopSelf: мгновенный старт после него не создаёт
+        // новый экземпляр и оставляет старые аргументы.
+        stopBypassService();
+        bypassHandler.postDelayed(new Runnable() {
+            @Override
+            public void run() {
+                if (BypassVpnService.isReady()) startBypassService();
+            }
+        }, 600L);
+    }
+
+    private void stopBypassService() {
+        Intent stop = new Intent(this, BypassVpnService.class)
+                .setAction(BypassVpnService.ACTION_STOP);
+        startService(stop);
+        getSharedPreferences(BypassVpnService.PREFS_BYPASS, MODE_PRIVATE)
+                .edit().putBoolean(BypassVpnService.PREF_ENABLED, false).apply();
+    }
+
+    private void showStrategyDialog(final BypassStrategy[] strategyList,
+                                    final int[] selectedIndex) {
+        CharSequence[] labels = new CharSequence[strategyList.length];
+        for (int i = 0; i < strategyList.length; i++) {
+            labels[i] = getString(strategyList[i].getLabelRes());
+        }
+        AlertDialog dialog = new AlertDialog.Builder(this)
+                .setTitle(R.string.settings_bypass_strategy)
+                .setSingleChoiceItems(labels, selectedIndex[0],
+                        new DialogInterface.OnClickListener() {
+                            @Override
+                            public void onClick(DialogInterface d, int which) {
+                                selectedIndex[0] = which;
+                                applyStrategy(strategyList[which].getId());
+                                d.dismiss();
+                            }
+                        })
+                .setNegativeButton(R.string.settings_close, null)
+                .create();
+        dialog.show();
+        applyDialogTheme(dialog);
+    }
+
+    private void applyStrategy(String strategyId) {
+        getSharedPreferences(BypassVpnService.PREFS_BYPASS, MODE_PRIVATE)
+                .edit().putString(BypassVpnService.PREF_STRATEGY, strategyId).apply();
+        Toast.makeText(this, getString(R.string.bypass_strategy_changed,
+                getString(BypassStrategy.byId(strategyId).getLabelRes())),
+                Toast.LENGTH_SHORT).show();
+        // Это гипотеза, а не решение: её всё равно подтверждает быстрый замер.
+        // Перезапускаем только если обход реально поднят.
+        if (BypassVpnService.isActive()) restartBypass();
+    }
 
     private void enableBypass() {
         if (!BypassVpnService.isReady()) {
@@ -2136,6 +2394,7 @@ public class MainActivity extends Activity {
         unregisterNetworkCallback();
         PlaybackService.detach(playbackController);
         playbackHandler.removeCallbacks(playbackPoll);
+        bypassHandler.removeCallbacksAndMessages(null);
         unregisterDownloadReceiver();
         if (web != null) {
             web.destroy();

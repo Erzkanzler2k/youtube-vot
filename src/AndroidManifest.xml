@@ -75,6 +75,16 @@
                 android:value="vpn_dpi_bypass" />
         </service>
 
+        <!-- Точка измерения обхода. isolatedProcess обязателен: процесс
+             приложения исключён из туннеля (addDisallowedApplication), поэтому
+             его сокеты идут мимо десканка и всегда показывают «работает».
+             Изолированный сервис получает собственный UID, в disallowlist не
+             значится и потому измеряет реальный путь трафика. -->
+        <service
+            android:name=".BypassProbeService"
+            android:exported="false"
+            android:isolatedProcess="true" />
+
         <!-- Завершение загрузки APK: на API 26+ implicit-броадкаст
              DOWNLOAD_COMPLETE доставляется только манифестным receiver'ом.
              exported=true обязателен: броадкаст шлёт DownloadManager (сторонний

@@ -80,9 +80,15 @@ public class ZipFix {
         try (Stream<Path> paths = Files.walk(root)) {
             for (Path path : (Iterable<Path>) paths.filter(Files::isRegularFile)
                     .filter(value -> value.toString().endsWith(".so"))::iterator) {
-                Path relative = root.relativize(path);
-                String entryName = "lib/" + relative.toString().replace('\\', '/');
-                ZipEntry entry = new ZipEntry(entryName);
+                String relative = root.relativize(path).toString().replace('\\', '/');
+                // ndk-build при NDK_LIBS_OUT=<dir> уже раскладывает библиотеки в
+                // <dir>/lib/<abi>/lib<module>.so. Если префиксовать "lib/" ещё раз,
+                // в APK попадут lib/lib/<abi>/..., и Android не найдёт нативные
+                // библиотеки. Поэтому префикс добавляется только когда его нет.
+                if (!relative.startsWith("lib/")) {
+                    relative = "lib/" + relative;
+                }
+                ZipEntry entry = new ZipEntry(relative);
                 entry.setTime(Files.getLastModifiedTime(path).toMillis());
                 zout.putNextEntry(entry);
                 Files.copy(path, zout);

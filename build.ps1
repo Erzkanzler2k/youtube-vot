@@ -121,11 +121,12 @@ if ($LASTEXITCODE -ne 0) { throw "d8 failed" }
 # --- 5. Pack classes.dex, native libraries, and normalized ZIP names ---------
 Write-Host "[6/8] pack classes.dex + native libraries + normalize zip names..." -ForegroundColor Cyan
 $unsigned = Join-Path $build "app-unsigned.apk"
-$zipfixClass = Join-Path $build "ZipFix.class"
-if (-not (Test-Path $zipfixClass)) {
-    & $javac -encoding UTF-8 -nowarn -d $build (Join-Path $root "tools\ZipFix.java")
-    if ($LASTEXITCODE -ne 0) { throw "ZipFix compile failed" }
-}
+$zipfixSource = Join-Path $root "tools\ZipFix.java"
+# Всегда перекомпилируем: build/ переживает сборки, поэтому наличие ZipFix.class
+# не означает, что он собран из текущего tools/ZipFix.java. Устаревший класс
+# молча упаковывает APK без нативных библиотек или с путём lib/lib/<abi>/.
+& $javac -encoding UTF-8 -nowarn -d $build $zipfixSource
+if ($LASTEXITCODE -ne 0) { throw "ZipFix compile failed" }
 $java = Join-Path $jdkBin "java.exe"
 $zipArgs = @((Join-Path $build "base.apk"), (Join-Path $dexDir "classes.dex"), $unsigned)
 if ($nativeLibDir) { $zipArgs += $nativeLibDir }
