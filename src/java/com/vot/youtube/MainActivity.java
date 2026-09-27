@@ -155,6 +155,8 @@ public class MainActivity extends Activity {
     private final Handler playbackHandler = new Handler(Looper.getMainLooper());
     /** Отдельный handler для перезапуска обхода: не смешивать с опросом плеера. */
     private final Handler bypassHandler = new Handler(Looper.getMainLooper());
+    /** Опрос прогресса проверки, создаётся при открытии настроек. */
+    private Runnable bypassProgressPoll;
     private final Runnable playbackPoll = new Runnable() {
         @Override
         public void run() {
@@ -1227,6 +1229,27 @@ public class MainActivity extends Activity {
         });
         content.addView(rowMtu);
 
+        // Журнал проверки: какие стратегии пробовали, с чем и с каким временем.
+        // Без него пользователь видит только «проверяем» и не может понять, что
+        // именно происходит и на чём проверка встала.
+        LinearLayout rowLog = settingsRow(R.drawable.ic_shield,
+                getString(R.string.settings_bypass_log),
+                getString(R.string.settings_bypass_log_desc));
+        rowLog.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                pressFeedback(v);
+                if (holder[0] != null) holder[0].dismiss();
+                showVerifyLog();
+            }
+        });
+        content.addView(rowLog);
+
+        // Пока идёт проверка, обновляем живую строку состояния: она меняется по
+        // мере прохождения шагов. Опрос, а не broadcast: не нужно возиться с
+        // экспортом получателя, а обновляемся мы только пока диалог открыт.
+        startBypassProgressPolling(bypassState, holder);
+
         // ---- СЕКЦИЯ: Опасная зона ----
         content.addView(sectionHeader(getString(R.string.settings_section_danger)));
 
@@ -1304,7 +1327,8 @@ public class MainActivity extends Activity {
 
     /**
      * Честный статус обхода: берётся из результата измерения, а не из факта
-     * нажатия. Пока измерения не было, показываем «выключено», а не «работает».
+     * нажатия. Пока идёт проверка, показываем её текущий шаг — перебор девяти
+     * стратегий идёт до минуты, и молчаливое «проверяем…» выглядит как зависание.
      */
     private String bypassStateText(int state, boolean active) {
         switch (state) {
@@ -1312,8 +1336,11 @@ public class MainActivity extends Activity {
                 return getString(R.string.bypass_state_ok);
             case BypassVpnService.STATE_SLOW:
                 return getString(R.string.bypass_state_slow);
-            case BypassVpnService.STATE_VERIFYING:
-                return getString(R.string.bypass_state_verifying);
+            case BypassVpnService.STATE_VERIFYING: {
+                String progress = BypassVpnService.getProgress(this);
+                return progress.isEmpty()
+                        ? getString(R.string.bypass_state_verifying) : progress;
+            }
             case BypassVpnService.STATE_FAILED:
                 return getString(R.string.bypass_state_failed);
             default:
@@ -1412,6 +1439,54 @@ public class MainActivity extends Activity {
                 text.append(getString(R.string.bypass_report_ipv6_ok)).append('\n');
             }
         }
+    }
+
+    /**
+     * Обновляет строку состояния, пока идёт проверка, и останавливается, когда
+     * проверка получила вердикт. Отдельный таймер, чтобы диалог настроек не
+     * работал вхолостую.
+     */
+    private void startBypassProgressPolling(final TextView state,
+                                            final AlertDialog[] holder) {
+        bypassHandler.removeCallbacks(bypassProgressPoll);
+        bypassProgressPoll = new Runnable() {
+            @Override
+            public void run() {
+                if (holder[0] == null || !holder[0].isShowing()) {
+                    bypassHandler.removeCallbacks(this);
+                    return;
+                }
+                int state0 = BypassVpnService.getState(MainActivity.this);
+                state.setText(bypassStateText(state0, BypassVpnService.isActive()));
+                updateBypassIndicator();
+                if (state0 == BypassVpnService.STATE_VERIFYING) {
+                    bypassHandler.postDelayed(this, 700L);
+                } else {
+                    bypassHandler.removeCallbacks(this);
+                }
+            }
+        };
+        bypassHandler.postDelayed(bypassProgressPoll, 700L);
+    }
+
+    /** Журнал проверки: newest first, каждая строка — стратегия и вердикт. */
+    private void showVerifyLog() {
+        String log = BypassVpnService.getLog(this);
+        AlertDialog dialog = new AlertDialog.Builder(this)
+                .setTitle(R.string.bypass_log_title)
+                .setMessage(log.isEmpty() ? getString(R.string.bypass_log_empty) : log)
+                .setPositiveButton(R.string.bypass_log_clear,
+                        new DialogInterface.OnClickListener() {
+                            @Override
+                            public void onClick(DialogInterface d, int which) {
+                                BypassVpnService.clearLog(MainActivity.this);
+                                d.dismiss();
+                            }
+                        })
+                .setNegativeButton(R.string.settings_close, null)
+                .create();
+        dialog.show();
+        applyDialogTheme(dialog);
     }
 
     private void showMtuDialog() {

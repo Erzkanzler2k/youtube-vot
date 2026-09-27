@@ -172,14 +172,17 @@ final class BypassProbe {
     /**
      * Прогоняет батарею в изолированном сервисе и ждёт ответ.
      *
-     * <p>Блокирующий вызов: вызывать только с рабочего потока. Возвращает
-     * {@code null}, если сервис не поднялся или не ответил вовремя, — это
-     * трактуется как «проверить не удалось», а не как «работает».
+     * <p>Блокирующий вызов, поэтому требуется поток с {@link Looper} — на нём же
+     * работает {@code bindService}, который без {@code Looper} бросает
+     * исключение. Возвращает {@code null}, если сервис не поднялся или не ответил
+     * вовремя: это трактуется как «проверить не удалось», а не как «работает».
      */
-    static Result runBlocking(Context context, int repeats, int timeoutMs) {
+    static Result runBlocking(Context context, Looper looper, int repeats, int timeoutMs) {
         final CountDownLatch latch = new CountDownLatch(1);
         final Result[] holder = new Result[1];
         final Messenger[] proxy = new Messenger[1];
+        final boolean[] connected = new boolean[]{false};
+        final ServiceConnection[] binding = new ServiceConnection[1];
 
         ServiceConnection connection = new ServiceConnection() {
             @Override
@@ -188,7 +191,7 @@ final class BypassProbe {
                 Message request = Message.obtain(null, MSG_RUN);
                 request.arg1 = repeats;
                 request.arg2 = timeoutMs;
-                request.replyTo = new Messenger(new Latch(latch, holder));
+                request.replyTo = new Messenger(new Latch(looper, latch, holder));
                 try {
                     proxy[0].send(request);
                 } catch (RemoteException error) {
@@ -201,22 +204,30 @@ final class BypassProbe {
                 latch.countDown();
             }
         };
+        binding[0] = connection;
 
-        Intent intent = new Intent(context, BypassProbeService.class);
-        if (!context.bindService(intent, connection, Context.BIND_AUTO_CREATE)) {
-            return null;
-        }
         try {
+            if (!context.bindService(new Intent(context, BypassProbeService.class),
+                    connection, Context.BIND_AUTO_CREATE)) {
+                return null;
+            }
+            connected[0] = true;
             if (!latch.await(timeoutMs + 4000L, TimeUnit.MILLISECONDS)) {
                 return null;
             }
         } catch (InterruptedException interrupted) {
             Thread.currentThread().interrupt();
             return null;
+        } catch (RuntimeException error) {
+            // Раньше эта ошибка роняла поток проверки, и состояние навсегда
+            // зависало на «проверяем». Теперь это просто отсутствие замера.
+            return null;
         } finally {
-            try {
-                context.unbindService(connection);
-            } catch (IllegalArgumentException ignored) {
+            if (connected[0]) {
+                try {
+                    context.unbindService(binding[0]);
+                } catch (IllegalArgumentException ignored) {
+                }
             }
         }
         return holder[0];
@@ -227,8 +238,8 @@ final class BypassProbe {
         private final CountDownLatch latch;
         private final Result[] holder;
 
-        Latch(CountDownLatch latch, Result[] holder) {
-            super(Looper.getMainLooper());
+        Latch(Looper looper, CountDownLatch latch, Result[] holder) {
+            super(looper);
             this.latch = latch;
             this.holder = holder;
         }

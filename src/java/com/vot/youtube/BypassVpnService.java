@@ -6,9 +6,12 @@ import android.app.NotificationManager;
 import android.app.PendingIntent;
 import android.content.Context;
 import android.content.Intent;
+import android.content.SharedPreferences;
 import android.content.pm.ServiceInfo;
 import android.net.VpnService;
 import android.os.Build;
+import android.os.Handler;
+import android.os.HandlerThread;
 import android.os.IBinder;
 import android.os.ParcelFileDescriptor;
 import android.util.Log;
@@ -38,6 +41,11 @@ public class BypassVpnService extends VpnService {
     public static final String PREF_STATE = "state";
     public static final String PREF_REPORT = "report";
     public static final String PREF_LAST_SWEEP = "last_sweep";
+    /** Живая строка прогресса текущего шага проверки. */
+    public static final String PREF_PROGRESS = "progress";
+    /** Накопленный журнал шагов проверки, строки через \n. */
+    public static final String PREF_LOG = "verify_log";
+    private static final int LOG_LINES_MAX = 40;
 
     /** Обход поднят, но ещё не измерен. */
     public static final int STATE_UNVERIFIED = 0;
@@ -102,7 +110,9 @@ public class BypassVpnService extends VpnService {
     private volatile BypassStrategy activeStrategy;
     /** Защита от гонки: подменять прокси и проверять должен только один поток. */
     private final Object proxyLock = new Object();
-    private Thread verifyThread;
+    private HandlerThread verifyHandlerThread;
+    private Handler verifyHandler;
+    private volatile boolean transportStarted;
 
     public static boolean isActive() {
         return sActive;
@@ -122,6 +132,23 @@ public class BypassVpnService extends VpnService {
     public static int getState(Context context) {
         return context.getSharedPreferences(PREFS_BYPASS, MODE_PRIVATE)
                 .getInt(PREF_STATE, STATE_UNVERIFIED);
+    }
+
+    /** Текущий шаг проверки одной строкой, для показа пользователю. */
+    public static String getProgress(Context context) {
+        return context.getSharedPreferences(PREFS_BYPASS, MODE_PRIVATE)
+                .getString(PREF_PROGRESS, "");
+    }
+
+    /** Журнал шагов проверки, newest first. */
+    public static String getLog(Context context) {
+        return context.getSharedPreferences(PREFS_BYPASS, MODE_PRIVATE)
+                .getString(PREF_LOG, "");
+    }
+
+    public static void clearLog(Context context) {
+        context.getSharedPreferences(PREFS_BYPASS, MODE_PRIVATE).edit()
+                .remove(PREF_LOG).remove(PREF_PROGRESS).apply();
     }
 
     public static int getMtu(Context context) {
@@ -160,11 +187,11 @@ public class BypassVpnService extends VpnService {
         }
         try {
             tun = establishTun();
-            startProxy(getSelectedStrategy(this));
-            startTunnel();
             running = true;
             sActive = true;
             setEnabled(true);
+            // Нативный старт и проверка идут на HandlerThread: на главном потоке
+            // любая задержка нативных вызовов даёт ANR («приложение не отвечает»).
             startVerification();
         } catch (Exception error) {
             Log.e(TAG, "VPN start failed", error);
@@ -355,27 +382,62 @@ public class BypassVpnService extends VpnService {
      * Остывание действует только на перебор: право сказать «не работает» даёт
      * именно он, и запрещать его нельзя, иначе приложение станет врать в другую
      * сторону.
+     *
+     * <p>Проверка идёт на {@code HandlerThread}, а не на голом {@code Thread}:
+     * {@code Context.bindService()} обязан вызываться из потока с
+     * {@code Looper} иначе бросает исключение, из-за чего поток проверки падал
+     * и состояние навсегда зависало на «проверяем». Плюс весь нативный старт
+     * вынесен сюда с главного потока, где любая задержка даёт ANR.
      */
     private void startVerification() {
         setState(STATE_VERIFYING, null);
-        verifyThread = new Thread(new Runnable() {
+        verifyHandlerThread = new HandlerThread("bypass-verify");
+        verifyHandlerThread.start();
+        verifyHandler = new Handler(verifyHandlerThread.getLooper());
+        verifyHandler.post(new Runnable() {
             @Override
             public void run() {
+                startTransport();
                 verify();
             }
-        }, "bypass-verify");
-        verifyThread.setDaemon(true);
-        verifyThread.start();
+        });
+    }
+
+    /** Поднимает прокси и транспорт. Вызывается только с рабочего потока. */
+    private void startTransport() {
+        if (transportStarted) return;
+        try {
+            startProxy(activeStrategy != null ? activeStrategy : getSelectedStrategy(this));
+            startTunnel();
+            transportStarted = true;
+        } catch (Exception error) {
+            Log.e(TAG, "transport start failed", error);
+            fail("не удалось поднять транспорт обхода: " + error);
+        }
     }
 
     private void verify() {
+        try {
+            verifyFlow();
+        } catch (Throwable error) {
+            // Любое исключение обязано приводить к явному вердикту. Иначе
+            // состояние навсегда остаётся «проверяем», и приложение выглядит
+            // зависшим, хотя сеть давно не проверялась.
+            Log.e(TAG, "verification crashed", error);
+            fail("проверка прервана ошибкой: " + error);
+        }
+    }
+
+    private void verifyFlow() {
         BypassStrategy current = activeStrategy != null ? activeStrategy : getSelectedStrategy(this);
 
+        publishStep(getString(R.string.bypass_progress_quick, label(current)));
         BypassProbe.Result quick = measure(BypassProbe.QUICK_REPEATS);
         if (quick != null && quick.verdict() != BypassProbe.VERDICT_FAIL) {
             accept(quick, current, false);
             return;
         }
+        logVerdict(current, quick);
 
         // Лестница: прошлый победитель и стратегия по умолчанию, если это не
         // текущая стратегия. Две дешёвые проверки вместо полного перебора.
@@ -387,6 +449,7 @@ public class BypassVpnService extends VpnService {
             ladder.add(BypassStrategy.byId(BypassStrategy.ID_DEFAULT));
         }
         for (BypassStrategy candidate : ladder) {
+            publishStep(getString(R.string.bypass_progress_ladder, label(candidate)));
             if (!swapProxy(candidate)) continue;
             BypassProbe.Result result = measure(BypassProbe.QUICK_REPEATS);
             if (result != null && result.verdict() != BypassProbe.VERDICT_FAIL) {
@@ -394,6 +457,7 @@ public class BypassVpnService extends VpnService {
                 accept(result, candidate, false);
                 return;
             }
+            logVerdict(candidate, result);
         }
 
         if (!swapProxy(current)) {
@@ -405,6 +469,10 @@ public class BypassVpnService extends VpnService {
         }
     }
 
+    private String label(BypassStrategy strategy) {
+        return getString(strategy.getLabelRes());
+    }
+
     /**
      * Перебор всех стратегий каталога с выбором победителя.
      *
@@ -414,23 +482,32 @@ public class BypassVpnService extends VpnService {
      * иначе приложение скачет между стратегиями на шумных замерах.
      */
     private boolean sweep(BypassStrategy current) {
+        BypassStrategy[] catalog = BypassStrategy.all();
         long lastSweep = getSharedPreferences(PREFS_BYPASS, MODE_PRIVATE)
                 .getLong(PREF_LAST_SWEEP, 0L);
         if (lastSweep > 0 && System.currentTimeMillis() - lastSweep
                 < BypassProbe.SWEEP_COOLDOWN_MS) {
+            publishStep(getString(R.string.bypass_progress_cooldown));
+            appendLog(getString(R.string.bypass_progress_cooldown));
             return false;
         }
 
-        BypassStrategy[] catalog = BypassStrategy.all();
         long currentMs = Long.MAX_VALUE;
         BypassProbe.Result currentResult = null;
         List<long[]> timings = new ArrayList<long[]>();
-        List<BypassStrategy> tried = new ArrayList<BypassStrategy>();
+        int done = 0;
 
         for (BypassStrategy candidate : catalog) {
-            if (!swapProxy(candidate)) continue;
+            done++;
+            publishStep(getString(R.string.bypass_progress_sweep, done, catalog.length,
+                    label(candidate)));
+            if (!swapProxy(candidate)) {
+                appendLog(getString(R.string.bypass_log_line, label(candidate),
+                        getString(R.string.bypass_verdict_nomeasure)));
+                continue;
+            }
             BypassProbe.Result result = measure(BypassProbe.SWEEP_REPEATS);
-            tried.add(candidate);
+            logVerdict(candidate, result);
             if (result == null || result.verdict() == BypassProbe.VERDICT_FAIL) continue;
             long median = result.medianOfWorst();
             if (candidate.getId().equals(current.getId())) {
@@ -493,20 +570,73 @@ public class BypassVpnService extends VpnService {
     }
 
     private BypassProbe.Result measure(int repeats) {
-        return BypassProbe.runBlocking(this, repeats, BypassProbe.HARD_TIMEOUT_MS);
+        return BypassProbe.runBlocking(this, verifyHandlerThread.getLooper(),
+                repeats, BypassProbe.HARD_TIMEOUT_MS);
+    }
+
+    /**
+     * Показывает пользователю текущий шаг одной строкой. Проверка с перебором
+     * девяти стратегий идёт до минуты, и молчаливое «проверяем…» на это время
+     * выглядит как зависание.
+     */
+    private void publishStep(String text) {
+        Log.i(TAG, "step: " + text);
+        getSharedPreferences(PREFS_BYPASS, MODE_PRIVATE).edit()
+                .putString(PREF_PROGRESS, text).apply();
+    }
+
+    private void logVerdict(BypassStrategy strategy, BypassProbe.Result result) {
+        String line;
+        if (result == null) {
+            line = getString(R.string.bypass_log_line, label(strategy),
+                    getString(R.string.bypass_verdict_nomeasure));
+        } else if (result.verdict() == BypassProbe.VERDICT_FAIL) {
+            line = getString(R.string.bypass_log_line, label(strategy),
+                    getString(R.string.bypass_verdict_fail));
+        } else if (result.verdict() == BypassProbe.VERDICT_SLOW) {
+            line = getString(R.string.bypass_log_line, label(strategy),
+                    getString(R.string.bypass_verdict_slow, result.worstHostMs()));
+        } else {
+            line = getString(R.string.bypass_log_line, label(strategy),
+                    getString(R.string.bypass_verdict_fast, result.worstHostMs()));
+        }
+        appendLog(line);
+    }
+
+    private void appendLog(String line) {
+        Log.i(TAG, "log: " + line);
+        SharedPreferences prefs = getSharedPreferences(PREFS_BYPASS, MODE_PRIVATE);
+        String existing = prefs.getString(PREF_LOG, "");
+        String[] lines = existing.isEmpty() ? new String[0] : existing.split("\n");
+        StringBuilder merged = new StringBuilder(line);
+        int from = Math.max(0, lines.length - (LOG_LINES_MAX - 1));
+        for (int i = from; i < lines.length; i++) {
+            if (lines[i].isEmpty()) continue;
+            merged.append('\n').append(lines[i]);
+        }
+        prefs.edit().putString(PREF_LOG, merged.toString()).apply();
     }
 
     /** Обход измерен и работает. */
     private void accept(BypassProbe.Result result, BypassStrategy strategy, boolean swept) {
         remember(strategy);
+        String verdict = result.verdict() == BypassProbe.VERDICT_SLOW
+                ? getString(R.string.bypass_state_slow)
+                : getString(R.string.bypass_state_ok);
+        String summary = getString(R.string.bypass_progress_done, label(strategy),
+                result.worstHostMs());
+        publishStep(summary);
+        appendLog(summary);
         setState(result.verdict() == BypassProbe.VERDICT_SLOW ? STATE_SLOW : STATE_OK,
                 buildReport(result, strategy, swept, null));
-        Log.i(TAG, "bypass accepted: " + strategy.getId() + " verdict=" + result.verdict());
+        Log.i(TAG, "bypass accepted: " + strategy.getId() + " verdict=" + verdict);
     }
 
     /** Ни одна стратегия не подошла: обход выключается, а не остаётся врёт. */
     private void fail(String reason) {
         Log.e(TAG, "bypass failed: " + reason);
+        publishStep(reason);
+        appendLog(reason);
         setState(STATE_FAILED, buildReport(null, null, true, reason));
         running = false;
         stopTunnel();
@@ -522,7 +652,7 @@ public class BypassVpnService extends VpnService {
     }
 
     private void setState(int state, String report) {
-        android.content.SharedPreferences.Editor editor =
+        SharedPreferences.Editor editor =
                 getSharedPreferences(PREFS_BYPASS, MODE_PRIVATE).edit()
                         .putInt(PREF_STATE, state);
         if (report != null) editor.putString(PREF_REPORT, report);
@@ -562,14 +692,15 @@ public class BypassVpnService extends VpnService {
 
     private void stopTunnel() {
         running = false;
-        if (verifyThread != null) {
-            verifyThread.interrupt();
+        if (verifyHandlerThread != null) {
+            verifyHandlerThread.quitSafely();
             try {
-                verifyThread.join(1500);
+                verifyHandlerThread.join(1500);
             } catch (InterruptedException interrupted) {
                 Thread.currentThread().interrupt();
             }
-            verifyThread = null;
+            verifyHandlerThread = null;
+            verifyHandler = null;
         }
         if (TProxyService.isAvailable()) {
             try {
