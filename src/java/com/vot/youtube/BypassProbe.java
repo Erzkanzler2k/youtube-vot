@@ -212,7 +212,7 @@ final class BypassProbe {
                 return null;
             }
             connected[0] = true;
-            if (!latch.await(timeoutMs + 4000L, TimeUnit.MILLISECONDS)) {
+            if (!latch.await(budgetMs(repeats, timeoutMs), TimeUnit.MILLISECONDS)) {
                 return null;
             }
         } catch (InterruptedException interrupted) {
@@ -231,6 +231,19 @@ final class BypassProbe {
             }
         }
         return holder[0];
+    }
+
+    /**
+     * Сколько ждать ответа батареи.
+     *
+     * <p>Было {@code timeout + 4000}, то есть 9 с, при том что сама батарея
+     * может идти {@code хосты × повторы × таймаут} — до 20 с на быстром замере и
+     * до 60 с в переборе. На медленной или блокированной сети ожидание истекало
+     * раньше батареи, и КАЖДАЯ стратегия засчитывалась как непрошедшая, включая
+     * рабочие. Отсюда и было «ни одна стратегия не прошла проверку».
+     */
+    static long budgetMs(int repeats, int timeoutMs) {
+        return (long) HOSTS.length * Math.max(1, repeats) * timeoutMs + 10000L;
     }
 
     /** Приёмник ответа из изолированного процесса. */

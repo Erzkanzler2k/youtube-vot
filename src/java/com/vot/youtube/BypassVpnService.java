@@ -113,6 +113,8 @@ public class BypassVpnService extends VpnService {
     private HandlerThread verifyHandlerThread;
     private Handler verifyHandler;
     private volatile boolean transportStarted;
+    /** Ни одного замера не получили: verdict-ы нельзя трактовать как блокировку. */
+    private volatile boolean noMeasurement;
 
     public static boolean isActive() {
         return sActive;
@@ -430,9 +432,11 @@ public class BypassVpnService extends VpnService {
 
     private void verifyFlow() {
         BypassStrategy current = activeStrategy != null ? activeStrategy : getSelectedStrategy(this);
+        boolean anyMeasured = false;
 
         publishStep(getString(R.string.bypass_progress_quick, label(current)));
         BypassProbe.Result quick = measure(BypassProbe.QUICK_REPEATS);
+        if (quick != null) anyMeasured = true;
         if (quick != null && quick.verdict() != BypassProbe.VERDICT_FAIL) {
             accept(quick, current, false);
             return;
@@ -452,6 +456,7 @@ public class BypassVpnService extends VpnService {
             publishStep(getString(R.string.bypass_progress_ladder, label(candidate)));
             if (!swapProxy(candidate)) continue;
             BypassProbe.Result result = measure(BypassProbe.QUICK_REPEATS);
+            if (result != null) anyMeasured = true;
             if (result != null && result.verdict() != BypassProbe.VERDICT_FAIL) {
                 remember(candidate);
                 accept(result, candidate, false);
@@ -461,11 +466,17 @@ public class BypassVpnService extends VpnService {
         }
 
         if (!swapProxy(current)) {
-            fail("не удалось поднять прокси ни под одной стратегией");
+            fail(getString(R.string.bypass_fail_noproxy));
             return;
         }
         if (!sweep(current)) {
-            fail("ни одна стратегия не прошла проверку");
+            // Если замеров не было ни одного, блокировка ни при чём: не
+            // измерялось вовсе. Иначе — хосты действительно не ответили.
+            if (!anyMeasured && !noMeasurement) {
+                fail(getString(R.string.bypass_fail_nomeasure));
+            } else {
+                fail(getString(R.string.bypass_fail_none));
+            }
         }
     }
 
@@ -496,6 +507,7 @@ public class BypassVpnService extends VpnService {
         BypassProbe.Result currentResult = null;
         List<long[]> timings = new ArrayList<long[]>();
         int done = 0;
+        boolean anyMeasured = false;
 
         for (BypassStrategy candidate : catalog) {
             done++;
@@ -508,6 +520,7 @@ public class BypassVpnService extends VpnService {
             }
             BypassProbe.Result result = measure(BypassProbe.SWEEP_REPEATS);
             logVerdict(candidate, result);
+            if (result != null) anyMeasured = true;
             if (result == null || result.verdict() == BypassProbe.VERDICT_FAIL) continue;
             long median = result.medianOfWorst();
             if (candidate.getId().equals(current.getId())) {
@@ -516,7 +529,13 @@ public class BypassVpnService extends VpnService {
             }
             timings.add(new long[]{median, candidate.getAggression(), timings.size()});
         }
-        if (timings.isEmpty()) return false;
+        if (timings.isEmpty()) {
+            // Ни одного замера вообще — это поломка измерения, а не блокировка.
+            // Раньше оба случая сводились к «ни одна стратегия не прошла», то
+            // есть приложение обвиняло сеть там, где виноват был сам замер.
+            noMeasurement = true;
+            return false;
+        }
         getSharedPreferences(PREFS_BYPASS, MODE_PRIVATE).edit()
                 .putLong(PREF_LAST_SWEEP, System.currentTimeMillis()).apply();
 

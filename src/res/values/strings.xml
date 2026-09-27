@@ -82,6 +82,9 @@
     <string name="bypass_log_title">Журнал проверки обхода</string>
     <string name="bypass_log_empty">Проверка ещё не выполнялась.</string>
     <string name="bypass_log_clear">Очистить</string>
+    <string name="bypass_fail_none">Ни одна стратегия не прошла проверку: хосты не отвечают</string>
+    <string name="bypass_fail_nomeasure">Проверку выполнить не удалось: замеры не пришли. Это не похоже на блокировку — пришлите лог</string>
+    <string name="bypass_fail_noproxy">Не удалось поднять прокси ни под одной стратегией</string>
     <string name="bypass_strategy_changed">Стратегия применена: %1$s</string>
     <string name="strategy_default">Авто (рекомендуется)</string>
     <string name="strategy_zapret_default">zapret default</string>
