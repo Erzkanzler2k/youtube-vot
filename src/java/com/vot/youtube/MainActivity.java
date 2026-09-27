@@ -65,6 +65,7 @@ import android.widget.FrameLayout;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.ProgressBar;
+import android.widget.ScrollView;
 import android.widget.Switch;
 import android.widget.TextView;
 import android.widget.Toast;
@@ -1011,6 +1012,11 @@ public class MainActivity extends Activity {
         LinearLayout content = new LinearLayout(this);
         content.setOrientation(LinearLayout.VERTICAL);
         content.setPadding(0, dp(8), 0, dp(8));
+        // Список настроек длиннее экрана, а AlertDialog не скроллит содержимое
+        // сам: без обёртки строки низа просто обрезаются и становятся
+        // недостижимыми. Так пропадали строки обхода при добавлении новых.
+        ScrollView contentScroll = new ScrollView(this);
+        contentScroll.addView(content);
 
         // ---- СЕКЦИЯ: Контент ----
         content.addView(sectionHeader(getString(R.string.settings_section_content)));
@@ -1238,7 +1244,7 @@ public class MainActivity extends Activity {
 
         AlertDialog dialog = new AlertDialog.Builder(this)
                 .setTitle(R.string.settings)
-                .setView(content)
+                .setView(contentScroll)
                 .setNegativeButton(R.string.settings_close, null)
                 .create();
         holder[0] = dialog;
