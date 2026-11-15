@@ -2632,7 +2632,14 @@ public class MainActivity extends Activity {
     protected void onPause() {
         super.onPause();
         if (isInPictureInPictureMode()) return; // в PiP медиа продолжает играть
-        if (web != null && !PlaybackService.isRunning()) web.onPause();
+        if (web == null || PlaybackService.isRunning()) return; // аудио ведёт сервис
+        // WebView.onPause() останавливает таймеры и рендер, но уже играющий
+        // <video> может продолжать звучать в фоне — ставим на паузу явно.
+        web.evaluateJavascript(
+                "(function(){try{var v=document.querySelectorAll('video');"
+                        + "for(var i=0;i<v.length;i++){try{v[i].pause();}catch(e){}}}"
+                        + "}catch(e){}})();", null);
+        web.onPause();
     }
 
     /**
