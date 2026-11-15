@@ -95,6 +95,32 @@
                 android:background="?android:attr/selectableItemBackgroundBorderless"
                 android:contentDescription="@string/refresh" />
 
+            <ImageView
+                android:id="@+id/btn_search"
+                android:layout_width="0dp"
+                android:layout_height="46dp"
+                android:layout_weight="1"
+                android:padding="11dp"
+                android:src="@drawable/ic_search"
+                android:tint="@color/icon"
+                android:clickable="true"
+                android:focusable="true"
+                android:background="?android:attr/selectableItemBackgroundBorderless"
+                android:contentDescription="@string/search" />
+
+            <ImageView
+                android:id="@+id/btn_share"
+                android:layout_width="0dp"
+                android:layout_height="46dp"
+                android:layout_weight="1"
+                android:padding="11dp"
+                android:src="@drawable/ic_share"
+                android:tint="@color/icon"
+                android:clickable="true"
+                android:focusable="true"
+                android:background="?android:attr/selectableItemBackgroundBorderless"
+                android:contentDescription="@string/share" />
+
             <FrameLayout
                 android:layout_width="0dp"
                 android:layout_height="46dp"

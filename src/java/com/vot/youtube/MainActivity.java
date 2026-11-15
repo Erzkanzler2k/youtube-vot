@@ -12,6 +12,7 @@ import android.annotation.SuppressLint;
 import android.app.Activity;
 import android.app.AlertDialog;
 import android.app.DownloadManager;
+import android.app.PictureInPictureParams;
 import android.content.ActivityNotFoundException;
 import android.content.BroadcastReceiver;
 import android.content.Context;
@@ -58,6 +59,7 @@ import android.webkit.WebResourceResponse;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
+import android.webkit.RenderProcessGoneDetail;
 import android.webkit.ValueCallback;
 import android.widget.CompoundButton;
 import android.widget.EditText;
@@ -79,6 +81,7 @@ import java.io.InputStreamReader;
 import java.net.HttpURLConnection;
 import java.net.URL;
 import java.util.Locale;
+import java.util.Set;
 
 import org.json.JSONArray;
 import org.json.JSONException;
@@ -294,6 +297,20 @@ public class MainActivity extends Activity {
             }
 
             @Override
+            public boolean onRenderProcessGone(WebView view, RenderProcessGoneDetail detail) {
+                // Рендер-процесс WebView погиб (бывает на слабых устройствах):
+                // перезагружаем страницу вместо вечного чёрного/белого экрана.
+                if (view == web) {
+                    try {
+                        web.reload();
+                        return true;
+                    } catch (Exception ignored) {
+                    }
+                }
+                return false;
+            }
+
+            @Override
             public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
                 return handleNavigation(request.getUrl().toString());
             }
@@ -414,6 +431,30 @@ public class MainActivity extends Activity {
                 showSettingsDialog();
             }
         });
+
+        // Поиск по YouTube
+        View search = findViewById(R.id.btn_search);
+        if (search != null) {
+            search.setOnClickListener(new View.OnClickListener() {
+                @Override
+                public void onClick(View v) {
+                    pressFeedback(v);
+                    showSearchDialog();
+                }
+            });
+        }
+
+        // Поделиться чистой ссылкой на текущую страницу
+        View share = findViewById(R.id.btn_share);
+        if (share != null) {
+            share.setOnClickListener(new View.OnClickListener() {
+                @Override
+                public void onClick(View v) {
+                    pressFeedback(v);
+                    shareCurrentUrl();
+                }
+            });
+        }
         updateBypassIndicator();
 
         String initial = HOME_URL;
@@ -641,9 +682,13 @@ public class MainActivity extends Activity {
                 + "';})();";
     }
 
-    /** Инжекция VoT: bootstrap- полифиллы + сам скрипт + тема оверлея. */
+    /** Инжекция VoT: bootstrap- полифиллы + сам скрипт + тема оверлея. Только YouTube-хосты. */
     private void injectVot(WebView view) {
-        if (!view.getUrl().startsWith("http")) return;
+        String url = view.getUrl();
+        if (url == null || !url.startsWith("http")) return;
+        Uri uri = Uri.parse(url);
+        String host = uri.getHost();
+        if (host == null || !isYoutubeHost(host)) return;
         view.evaluateJavascript(readAsset(VOT_BOOTSTRAP), null);
         view.evaluateJavascript(readAsset(VOT_BUNDLE), null);
         // Тема страницы принадлежит YouTube и может не совпадать с системной
@@ -933,11 +978,38 @@ public class MainActivity extends Activity {
         return "auto".equals(stored) ? deviceCode() : stored;
     }
 
-    /** Добавляет hl/gl-параметры к URL, сохраняя существующий query. */
+    /** Добавляет hl/gl-параметры к URL, предварительно убрав уже существующие (без дублей при перезагрузке). */
     private String withRegion(String url) {
-        String gl = effectiveCode();
-        String sep = url.contains("?") ? "&" : "?";
-        return url + sep + "hl=ru&gl=" + gl;
+        Uri uri = Uri.parse(url);
+        Set<String> keys = null;
+        try {
+            keys = uri.getQueryParameterNames();
+        } catch (Exception ignored) {
+        }
+        boolean hasRegion = keys != null && (keys.contains("hl") || keys.contains("gl"));
+        if (!hasRegion) {
+            String sep = url.contains("?") ? "&" : "?";
+            return url + sep + "hl=ru&gl=" + effectiveCode();
+        }
+        // Пересобираем query без hl/gl, затем добавляем свежие значения
+        StringBuilder sb = new StringBuilder();
+        if (uri.getScheme() != null) sb.append(uri.getScheme()).append("://");
+        if (uri.getAuthority() != null) sb.append(uri.getAuthority());
+        if (uri.getPath() != null) sb.append(uri.getPath());
+        boolean first = true;
+        if (keys != null) {
+            for (String key : keys) {
+                if ("hl".equals(key) || "gl".equals(key)) continue;
+                for (String value : uri.getQueryParameters(key)) {
+                    sb.append(first ? '?' : '&')
+                            .append(Uri.encode(key)).append('=').append(Uri.encode(value));
+                    first = false;
+                }
+            }
+        }
+        sb.append(first ? '?' : '&').append("hl=ru&gl=").append(effectiveCode());
+        if (uri.getFragment() != null) sb.append('#').append(uri.getFragment());
+        return sb.toString();
     }
 
     private int indexOfCode(String[] codes, String code) {
@@ -1000,6 +1072,107 @@ public class MainActivity extends Activity {
         TextView label = findViewById(R.id.splash_region_label);
         if (label == null) return;
         label.setText(regionLabel());
+    }
+
+    /* ---------------- Поиск по YouTube ---------------- */
+
+    /** Диалог поиска: строка запроса или вставленная YouTube-ссылка. */
+    private void showSearchDialog() {
+        final EditText input = new EditText(this);
+        input.setSingleLine(true);
+        input.setHint(R.string.search_hint);
+        new AlertDialog.Builder(this)
+                .setTitle(R.string.search_title)
+                .setView(input)
+                .setPositiveButton(android.R.string.ok, new DialogInterface.OnClickListener() {
+                    @Override
+                    public void onClick(DialogInterface d, int w) {
+                        applySearch(input.getText().toString());
+                    }
+                })
+                .setNegativeButton(android.R.string.cancel, null)
+                .show();
+    }
+
+    private void applySearch(String query) {
+        if (web == null) return;
+        String clean = (query == null ? "" : query).trim();
+        if (clean.isEmpty()) return;
+        // Вставили ссылку — открываем её как есть (только YouTube)
+        if (clean.startsWith("http://") || clean.startsWith("https://")) {
+            Uri uri = Uri.parse(clean);
+            String host = uri.getHost();
+            if (host != null && (host.contains("youtube") || "youtu.be".equals(host))) {
+                web.loadUrl(withRegion(clean));
+                return;
+            }
+            Toast.makeText(this, R.string.search_not_youtube, Toast.LENGTH_SHORT).show();
+            return;
+        }
+        web.loadUrl(withRegion("https://m.youtube.com/results?search_query="
+                + Uri.encode(clean)));
+    }
+
+    /* ---------------- Поделиться ссылкой ---------------- */
+
+    private void shareCurrentUrl() {
+        if (web == null) return;
+        String url = web.getUrl();
+        if (url == null || url.isEmpty()) url = withRegion(HOME_URL);
+        shareText(cleanShareUrl(url));
+    }
+
+    private void shareText(String text) {
+        Intent send = new Intent(Intent.ACTION_SEND);
+        send.setType("text/plain");
+        send.putExtra(Intent.EXTRA_TEXT, text);
+        try {
+            startActivity(Intent.createChooser(send, getString(R.string.share_title)));
+        } catch (Exception e) {
+            Toast.makeText(this, R.string.share_failed, Toast.LENGTH_SHORT).show();
+        }
+    }
+
+    /** Ссылка без трекинг-параметров: si, feature, pp, app, utm_*, source_ve_path и т.п. */
+    private static String cleanShareUrl(String url) {
+        Uri uri = Uri.parse(url);
+        Set<String> keys;
+        try {
+            keys = uri.getQueryParameterNames();
+        } catch (Exception e) {
+            return url;
+        }
+        boolean hasTracking = false;
+        for (String key : keys) {
+            if (isTrackingParam(key)) {
+                hasTracking = true;
+                break;
+            }
+        }
+        if (!hasTracking) return url;
+        StringBuilder sb = new StringBuilder();
+        if (uri.getScheme() != null) sb.append(uri.getScheme()).append("://");
+        if (uri.getAuthority() != null) sb.append(uri.getAuthority());
+        if (uri.getPath() != null) sb.append(uri.getPath());
+        boolean first = true;
+        for (String key : keys) {
+            if (isTrackingParam(key)) continue;
+            for (String value : uri.getQueryParameters(key)) {
+                sb.append(first ? '?' : '&')
+                        .append(Uri.encode(key)).append('=').append(Uri.encode(value));
+                first = false;
+            }
+        }
+        if (uri.getFragment() != null) sb.append('#').append(uri.getFragment());
+        return sb.toString();
+    }
+
+    private static boolean isTrackingParam(String key) {
+        if (key == null) return false;
+        String k = key.toLowerCase(Locale.US);
+        return "si".equals(k) || "feature".equals(k) || "pp".equals(k)
+                || "app".equals(k) || "source_ve_path".equals(k)
+                || "redir_token".equals(k) || k.startsWith("utm_");
     }
 
     /* ---------------- Настройки приложения ---------------- */
@@ -2458,7 +2631,37 @@ public class MainActivity extends Activity {
     @Override
     protected void onPause() {
         super.onPause();
+        if (isInPictureInPictureMode()) return; // в PiP медиа продолжает играть
         if (web != null && !PlaybackService.isRunning()) web.onPause();
+    }
+
+    /**
+     * Картинка-в-картинке: ушли из приложения во время полноэкранного видео —
+     * плеер сворачивается в уголок экрана, звук и картинка продолжают идти.
+     */
+    @Override
+    public void onUserLeaveHint() {
+        super.onUserLeaveHint();
+        if (customView == null || web == null || isInPictureInPictureMode()) return;
+        if (PlaybackService.isRunning()) return; // аудио ведёт сервис, PiP не нужен
+        try {
+            if (Build.VERSION.SDK_INT >= 26) {
+                enterPictureInPictureMode(new PictureInPictureParams.Builder().build());
+            } else {
+                enterPictureInPictureMode();
+            }
+        } catch (Exception ignored) {
+        }
+    }
+
+    @Override
+    public void onPictureInPictureModeChanged(boolean isInPip) {
+        super.onPictureInPictureModeChanged(isInPip);
+        if (isInPip) return;
+        // Вернулись из PiP: восстанавливаем панель, если полноэкранный режим уже закрыт
+        boolean fullscreen = customView != null;
+        if (bottomBar != null) bottomBar.setVisibility(fullscreen ? View.GONE : View.VISIBLE);
+        if (!fullscreen && web != null) web.onResume();
     }
 
     @Override

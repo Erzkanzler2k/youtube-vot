@@ -118,4 +118,11 @@
     <string name="offline_title">Нет соединения</string>
     <string name="offline_sub">Проверьте подключение к интернету</string>
     <string name="retry">Повторить</string>
+    <string name="search">Поиск</string>
+    <string name="search_title">Поиск на YouTube</string>
+    <string name="search_hint">Запрос или ссылка YouTube…</string>
+    <string name="search_not_youtube">Открывать можно только ссылки YouTube</string>
+    <string name="share">Поделиться</string>
+    <string name="share_title">Поделиться ссылкой</string>
+    <string name="share_failed">Не удалось открыть меню «Поделиться»</string>
 </resources>
