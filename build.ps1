@@ -149,7 +149,19 @@ if ([string]::IsNullOrWhiteSpace($ks) -or [string]::IsNullOrWhiteSpace($ksPass) 
     [string]::IsNullOrWhiteSpace($keyAlias) -or [string]::IsNullOrWhiteSpace($keyPass)) {
     throw "Set VOT_KEYSTORE, VOT_KEYSTORE_PASSWORD, VOT_KEY_ALIAS and VOT_KEY_PASSWORD before building"
 }
-if (-not (Test-Path $ks)) { throw "Release keystore not found: $ks" }
+if (-not (Test-Path $ks)) {
+    # Секрет CI (VOT_KEYSTORE) передаётся как base64 содержимого keystore,
+    # а не как путь к файлу. Пробуем декодировать во временный файл.
+    try {
+        $ksBytes = [Convert]::FromBase64String($ks)
+        $tmpKs = Join-Path ([IO.Path]::GetTempPath()) "vot-release.keystore"
+        [IO.File]::WriteAllBytes($tmpKs, $ksBytes)
+        $ks = $tmpKs
+    } catch {
+        throw "Release keystore not found and not valid base64: $ks"
+    }
+    if (-not (Test-Path $ks)) { throw "Failed to materialize release keystore" }
+}
 $final = Join-Path $out "YouTubeVot.apk"
 & "$bt\apksigner.bat" sign --ks $ks --ks-key-alias $keyAlias `
     --ks-pass "pass:$ksPass" --key-pass "pass:$keyPass" `
