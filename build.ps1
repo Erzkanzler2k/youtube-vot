@@ -67,17 +67,32 @@ if (Test-Path (Join-Path $nativeRoot "Android.mk")) {
     }
     $nativeObj = Join-Path $build "native-obj"
     $nativeLibDir = Join-Path $build "native-libs"
-    New-Item -ItemType Directory -Force -Path $nativeObj, $nativeLibDir | Out-Null
+    # ndk-build подчищает NDK_LIBS_OUT до модулей ТЕКУЩЕГО вызова: если оба
+    # вызова пишут в одну папку, второй удаляет .so первого. Каждому вызову —
+    # своя папка, объединяем перед ZipFix.
+    $hevLibDir = Join-Path $build "native-libs-hev"
+    New-Item -ItemType Directory -Force -Path $nativeObj, $nativeLibDir, $hevLibDir | Out-Null
     Write-Host "[1/8] ndk-build (hev-socks5-tunnel)..." -ForegroundColor Cyan
     & $ndkBuild -C (Join-Path $nativeRoot "hev-socks5-tunnel") `
         APP_BUILD_SCRIPT=Android.mk NDK_APPLICATION_MK=Application.mk `
-        NDK_OUT=$nativeObj NDK_LIBS_OUT=$nativeLibDir APP_ABI="armeabi-v7a arm64-v8a x86 x86_64"
+        NDK_OUT=$nativeObj NDK_LIBS_OUT=$hevLibDir APP_ABI="armeabi-v7a arm64-v8a x86 x86_64"
     if ($LASTEXITCODE -ne 0) { throw "hev-socks5-tunnel native build failed" }
     Write-Host "[1/8] ndk-build (byedpi)..." -ForegroundColor Cyan
     & $ndkBuild -C $nativeRoot `
         APP_BUILD_SCRIPT=Android.mk NDK_APPLICATION_MK=Application.mk `
         NDK_OUT=$nativeObj NDK_LIBS_OUT=$nativeLibDir APP_ABI="armeabi-v7a arm64-v8a x86 x86_64"
     if ($LASTEXITCODE -ne 0) { throw "byedpi native build failed" }
+    # Объединяем: libhev-socks5-tunnel.so кладём рядом с libbyedpi.so.
+    $hevLibRoot = Join-Path $hevLibDir "lib"
+    if (Test-Path $hevLibRoot) {
+        Copy-Item (Join-Path $hevLibRoot "*") (Join-Path $nativeLibDir "lib") -Recurse -Force
+    }
+    # Защита: без libhev-socks5-tunnel.so BypassVpnService не заработает
+    # (TProxyService грузит именно его), а ZipFix молча соберёт APK без него.
+    $soCount = (Get-ChildItem (Join-Path $nativeLibDir "lib") -Recurse -Filter *.so).Count
+    if ($soCount -lt 8) {
+        throw "Native libraries incomplete: $soCount .so in $nativeLibDir (expected 8: byedpi + hev-socks5-tunnel x 4 ABI)"
+    }
 }
 
 # --- 1. Compile resources ---------------------------------------------------
