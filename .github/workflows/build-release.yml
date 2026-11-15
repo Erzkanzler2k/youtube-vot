@@ -74,6 +74,10 @@ jobs:
         shell: pwsh
         env:
           JAVAC: '${{ steps.setup-java.outputs.path }}\bin\javac.exe'
+          VOT_KEYSTORE: '${{ secrets.VOT_KEYSTORE }}'
+          VOT_KEYSTORE_PASSWORD: '${{ secrets.VOT_KEYSTORE_PASSWORD }}'
+          VOT_KEY_ALIAS: '${{ secrets.VOT_KEY_ALIAS }}'
+          VOT_KEY_PASSWORD: '${{ secrets.VOT_KEY_PASSWORD }}'
         run: powershell -ExecutionPolicy Bypass -File .\build.ps1
 
       - name: Upload APK artifact
@@ -91,5 +95,5 @@ jobs:
           body: |
             Автосборка: GitHub Actions (Windows runner, тот же ручной пайплайн).
 
-            APK подписан общим debug-ключом (alias `vot`) — ставится поверх
-            предыдущих версий без удаления приложения.
+            APK подписан release-ключом (alias `vot`). При смене ключа подписи
+            требуется удалить предыдущую версию приложения перед установкой.
