@@ -8,8 +8,8 @@ LOCAL_CFLAGS := -O3 -std=c99 -DANDROID_APP -Wall -Wextra
 LOCAL_LDLIBS := -llog
 include $(BUILD_SHARED_LIBRARY)
 
-# hev-socks5-tunnel (tun2socks) — вторая половина транспорта обхода.
-# Без неё BypassVpnService.isReady() == false, потому что TProxyService
-# грузит именно libhev-socks5-tunnel.so, и переключатель обхода отвечает
-# «движок не готов». Модуль собирает собственный Android.mk, подключаем его.
-include $(LOCAL_PATH)/hev-socks5-tunnel/Android.mk
+# hev-socks5-tunnel (tun2socks) НЕ подключается здесь: его Android.mk
+# использует пути вида src/core/..., валидные только относительно его
+# собственной папки. При include отсюда ndk-build падает с
+# "No rule to make target 'src/core/src/hev-rbtree.c'".
+# Его собирает отдельный вызов ndk-build -C hev-socks5-tunnel в build.ps1.
