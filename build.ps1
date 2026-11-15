@@ -82,14 +82,14 @@ if (Test-Path (Join-Path $nativeRoot "Android.mk")) {
         APP_BUILD_SCRIPT=Android.mk NDK_APPLICATION_MK=Application.mk `
         NDK_OUT=$nativeObj NDK_LIBS_OUT=$nativeLibDir APP_ABI="armeabi-v7a arm64-v8a x86 x86_64"
     if ($LASTEXITCODE -ne 0) { throw "byedpi native build failed" }
-    # Объединяем: libhev-socks5-tunnel.so кладём рядом с libbyedpi.so.
-    $hevLibRoot = Join-Path $hevLibDir "lib"
-    if (Test-Path $hevLibRoot) {
-        Copy-Item (Join-Path $hevLibRoot "*") (Join-Path $nativeLibDir "lib") -Recurse -Force
+    # Объединяем: ndk-build раскладывает в NDK_LIBS_OUT\<abi>\lib*.so
+    # (БЕЗ префикса lib/ — его добавляет ZipFix при упаковке).
+    if (Test-Path $hevLibDir) {
+        Copy-Item (Join-Path $hevLibDir "*") $nativeLibDir -Recurse -Force
     }
     # Защита: без libhev-socks5-tunnel.so BypassVpnService не заработает
     # (TProxyService грузит именно его), а ZipFix молча соберёт APK без него.
-    $soCount = (Get-ChildItem (Join-Path $nativeLibDir "lib") -Recurse -Filter *.so).Count
+    $soCount = (Get-ChildItem $nativeLibDir -Recurse -Filter *.so).Count
     if ($soCount -lt 8) {
         throw "Native libraries incomplete: $soCount .so in $nativeLibDir (expected 8: byedpi + hev-socks5-tunnel x 4 ABI)"
     }

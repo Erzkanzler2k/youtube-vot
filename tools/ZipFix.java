@@ -81,10 +81,10 @@ public class ZipFix {
             for (Path path : (Iterable<Path>) paths.filter(Files::isRegularFile)
                     .filter(value -> value.toString().endsWith(".so"))::iterator) {
                 String relative = root.relativize(path).toString().replace('\\', '/');
-                // ndk-build при NDK_LIBS_OUT=<dir> уже раскладывает библиотеки в
-                // <dir>/lib/<abi>/lib<module>.so. Если префиксовать "lib/" ещё раз,
-                // в APK попадут lib/lib/<abi>/..., и Android не найдёт нативные
-                // библиотеки. Поэтому префикс добавляется только когда его нет.
+                // ndk-build при NDK_LIBS_OUT=<dir> кладёт библиотеки в
+                // <dir>/<abi>/lib<module>.so (БЕЗ префикса lib/). Если префиксовать
+                // "lib/" ещё раз, в APK попадут lib/lib/<abi>/..., и Android не
+                // найдёт нативные библиотеки. Префикс добавляется только когда его нет.
                 if (!relative.startsWith("lib/")) {
                     relative = "lib/" + relative;
                 }
